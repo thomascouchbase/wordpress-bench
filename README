@@ -1,0 +1,84 @@
+                           _
+                         _| | ___ ___ ___    _  ___
+                        /   |/ _// _/'   \ _| |/  /
+                        \__ .\__|\__||  _/'_|_|/__/
+                                     |_|
+
+README
+
+  The WordPress Benchmark is a standalone `bash` script that performs a
+  multi-phase, load-test oriented benchmark against WordPress and WooCommerce.
+  The script will set up a database and prepare a clean WordPress installation
+  before performing the benchmark, and can orchestrate its actions on remote
+  hosts to simulate an independent database and web server.
+
+  The benchmark runs a load test for five phases of a Wordpress install:
+
+    1. The base WordPress install
+    2. WooCommerce with static data
+    3. Realtime data under load
+    4. Installation of common plugins
+    5. Realtime data under load
+
+  The following programs must be installed:
+
+    * MySQL < 5.7 (`mysqld`, `mysql_install_db`)
+    * Apache >= 2.2.15 (`httpd`, `rc.d` initscripts)
+    * Siege >= 3.0.8 (`siege`, see https://www.joedog.org/siege-home/)
+
+  The script also assumes that the user has `sudo` access (to install `httpd`
+  configs) and that the `$REMOTE_USER` has SSH access to the remote hosts.
+
+PARAMETERS
+
+  The script recognizes the following parameters:
+
+    `WORKSPACE`     The directory to operate within. The MySQL `datadir` and
+                    Wordpress installation will be placed here, as well as
+                    runtime and log files created by the benchmark.
+
+                    Default: /tmp/wordpress-bench
+
+    `REMOTE_USER`   The SSH user to login as when connecting to remote hosts.
+                    It is recommended to use SSH keys and `ssh-agent` to allow
+                    connections to be made without prompting for a password.
+
+                    Default: $USER
+
+    `MYSQL_SERVER`  The IP address or domain name of the server chosen to
+    `HTTPD_SERVER`  function as the database, web, and siege server,
+    `SIEGE_SERVER`  respectively.
+
+                    Default: localhost
+
+    `SIEGE_TIME`    The siege duration during the benchmark's first phase.
+                    Includes the unit ("S", "M", "H"), eg: `60S` or `5M`.
+
+                    Default: 5M
+
+    `SIEGE_USERS`   The number of concurrent siege users.
+
+                    Default: 50
+
+    `STATIC_PRODUCT_COUNT`    The number of WooCommerce products and comments
+    `STATIC_COMMENT_COUNT`    to generate during the benchmark's second phase.
+
+                              Default: 100 products, 1000 comments
+
+    `REALTIME_PRODUCT_COUNT`  The number of WooCommerce products and comments
+    `REALTIME_COMMENT_COUNT`  to generate on a background thread during the
+                              benchmark's third and fifth phases.
+
+                              Default: 100 products, 200 comments
+
+  Additionally, the following parameter may be provided in order to use a
+  non-standard MySQL installation path:
+
+    `MYSQL_DIR`    The directory containing the MySQL installation.
+                   Used as the `basedir` in the `mysqld` configuration.
+
+                   Default: /usr
+
+LICENSE
+
+  The WordPress Benchmark is MIT licensed. See LICENSE for details.
