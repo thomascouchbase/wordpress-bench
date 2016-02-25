@@ -294,8 +294,8 @@ function bench () {
 
 	timer 'start'
 	local readonly siege_file=$(mktemp --quiet siege.XXX)
+	on 'httpd' "touch ${WORKSPACE}/${engine}/.realtime"
 	(
-		on 'httpd' "touch ${WORKSPACE}/${engine}/.realtime"
 		on 'siege' call 'start_siege' "${engine}" "'phase-03: realtime data + siege'" "'file:${WORKSPACE}/${engine}/urls'"
 		on 'httpd' "rm ${WORKSPACE}/${engine}/.realtime"
 	) &>"${siege_file}" &
@@ -321,8 +321,8 @@ function bench () {
 
 	timer 'start'
 	local readonly siege_file=$(mktemp --quiet siege.XXX)
+	on 'httpd' "touch ${WORKSPACE}/${engine}/.realtime"
 	(
-		on 'httpd' "touch ${WORKSPACE}/${engine}/.realtime"
 		on 'siege' call 'start_siege' "${engine}" "'phase-05: realtime data + siege'" "'file:${WORKSPACE}/${engine}/urls'"
 		on 'httpd' "rm ${WORKSPACE}/${engine}/.realtime"
 	) &>"${siege_file}" &
