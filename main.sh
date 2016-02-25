@@ -210,9 +210,13 @@ function init_httpd_host () {
 	cat <<-EOF | sudo tee "${HTTPD_CONF_DIR}/wordpress-bench.${engine}.conf" >/dev/null
 		Alias /wordpress/${engine} ${WORKSPACE}/${engine}/wordpress
 		<Directory "${WORKSPACE}/${engine}/wordpress">
+			<IfVersion < 2.4>
 			Order allow,deny
 			Allow from all
+			</IfVersion>
+			<IfVersion >= 2.4>
 			Require all granted
+			</IfVersion>
 		</Directory>
 	EOF
 
