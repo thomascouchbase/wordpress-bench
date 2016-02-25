@@ -638,6 +638,9 @@ function capture_metrics () {
 
 	cat <(du -sh "${WORKSPACE}/${engine}/mysql/wordpress/";) \
 		>>"${WORKSPACE}/${engine}/du" 2>/dev/null
+	
+	uptime | sed -e 's/.*load/load/' \
+		>>"${WORKSPACE}/${engine}/load"
 }
 
 ## utility #################################################
