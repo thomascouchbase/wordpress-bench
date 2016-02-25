@@ -154,6 +154,8 @@ function init_mysql_host () {
 			datadir = ${WORKSPACE}/deep/mysql
 			socket = ${WORKSPACE}/deep/mysql.sock
 
+			plugin-load = ha_deep.so
+
 			default-storage-engine = Deep
 			default-tmp-storage-engine = Deep
 			transaction-isolation = repeatable-read
@@ -340,7 +342,11 @@ function setup_wordpress_database () {
 
 	log 'Start mysqld and create database'
 	{
-		mysqld --defaults-file="${WORKSPACE}/${engine}/mysql.conf" &>"${WORKSPACE}/${engine}/mysql.log" &
+		if [[ -e /usr/lib/mysql/plugin/libtcmalloc_minimal.so ]]; then
+			(export LD_PRELOAD=/usr/lib/mysql/plugin/libtcmalloc_minimal.so; mysqld --defaults-file="${WORKSPACE}/${engine}/mysql.conf" &>"${WORKSPACE}/${engine}/mysql.log" &)
+		else
+			(mysqld --defaults-file="${WORKSPACE}/${engine}/mysql.conf" &>"${WORKSPACE}/${engine}/mysql.log" &)
+		fi
 		mysqladmin --socket="${WORKSPACE}/${engine}/mysql.sock" --wait=1 --connect-timeout=10 ping
 
 		mysql -uroot --socket="${WORKSPACE}/${engine}/mysql.sock" <<-EOF
