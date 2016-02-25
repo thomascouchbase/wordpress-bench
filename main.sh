@@ -68,6 +68,7 @@ function main () {
 		local readonly engine="$1"
 		init "${engine}"
 		bench "${engine}"
+		fin
 	fi
 }
 
@@ -205,7 +206,7 @@ function init_httpd_host () {
 	curl -sS 'https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar' > "${WORKSPACE}/wp"
 	chmod 755 "${WORKSPACE}/wp"
 
-	cat <<-EOF | sudo tee "${HTTPD_CONF_DIR}/wordpress.${engine}.conf" >/dev/null
+	cat <<-EOF | sudo tee "${HTTPD_CONF_DIR}/wordpress-bench.${engine}.conf" >/dev/null
 		Alias /wordpress/${engine} ${WORKSPACE}/${engine}/wordpress
 		<Directory "${WORKSPACE}/${engine}/wordpress">
 			Order allow,deny
@@ -324,7 +325,8 @@ function bench () {
 }
 
 function fin () {
-	on 'mysql' 'killall --quiet mysql'
+	on 'mysql' 'killall --quiet mysqld'
+	on 'httpd' "sudo rm -f ${HTTPD_CONF_DIR}/wordpress-bench.deep.conf ${HTTPD_CONF_DIR}/wordpress-bench.innodb.conf"
 }
 
 ## phases ##################################################
@@ -692,4 +694,5 @@ function minsec () {
 				-e 's:0 \(hour\|min\|second\)s ::g'
 }
 
+trap fin ERR
 main "$@"
