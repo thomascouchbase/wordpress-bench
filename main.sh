@@ -152,6 +152,7 @@ function init_mysql_host () {
 			[mysqld]
 			basedir = ${MYSQL_DIR}
 			datadir = ${WORKSPACE}/deep/mysql
+			socket = ${WORKSPACE}/deep/mysql.sock
 
 			default-storage-engine = Deep
 			default-tmp-storage-engine = Deep
@@ -170,6 +171,7 @@ function init_mysql_host () {
 			[mysqld]
 			basedir = ${MYSQL_DIR}
 			datadir = ${WORKSPACE}/innodb/mysql
+			socket = ${WORKSPACE}/innodb/mysql.sock
 
 			default-storage-engine = InnoDB
 			default-tmp-storage-engine = InnoDB
@@ -184,7 +186,12 @@ function init_mysql_host () {
 			table-open-cache = 800
 		EOF
 	fi
-	mysql_install_db --no-defaults --user="${USER}" --datadir="${WORKSPACE}/${engine}/mysql" &>"${WORKSPACE}/${engine}/mysql.install.log"
+
+	mysql_install_db --no-defaults                  \
+		--user="${USER}"                             \
+		--socket="${WORKSPACE}/${engine}/mysql.sock" \
+		--datadir="${WORKSPACE}/${engine}/mysql"     \
+		&>"${WORKSPACE}/${engine}/mysql.install.log"
 }
 
 function init_httpd_host () {
@@ -334,9 +341,9 @@ function setup_wordpress_database () {
 	log 'Start mysqld and create database'
 	{
 		mysqld --defaults-file="${WORKSPACE}/${engine}/mysql.conf" &>"${WORKSPACE}/${engine}/mysql.log" &
-		mysqladmin ping --wait
+		mysqladmin --socket="${WORKSPACE}/${engine}/mysql.sock" --wait=1 --connect-timeout=10 ping
 
-		mysql -uroot <<-EOF
+		mysql -uroot --socket="${WORKSPACE}/${engine}/mysql.sock" <<-EOF
 		drop database if exists wordpress;
 
 		create database wordpress;
@@ -368,7 +375,7 @@ function install_wordpress_base () {
 			--dbname="wordpress" \
 			--dbuser='wordpress' \
 			--dbpass='wordpress' \
-			--dbhost="${MYSQL_SERVER}"
+			--dbhost="${MYSQL_SERVER}:${WORKSPACE}/${engine}/mysql.sock"
 
 		wp core install                                       \
 			--url="http://${HTTPD_SERVER}/wordpress/${engine}" \
