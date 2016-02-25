@@ -320,8 +320,8 @@ function bench () {
 	timer 'stop'
 	log
 
-	on 'mysql' 'killall --quiet mysqld'
-	sleep 300
+	log "Benchmark complete. See results in ${WORKSPACE}/${engine}"
+	log
 }
 
 function fin () {
@@ -629,6 +629,7 @@ function start_siege () {
 		echo >> "${WORKSPACE}/${engine}/siege.log"
 	} |& tail -n+6 | sed -e 's/:\s\+/:\t/g' | column -ts $'\t' | indent
 
+	log 'Sleeping 60s to recover from siege...' |& indent
 	sleep 60
 }
 
@@ -653,6 +654,7 @@ function log () {
 
 function fail () {
 	log "$@"
+	log
 	exit 1
 }
 
