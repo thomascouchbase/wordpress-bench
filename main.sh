@@ -191,12 +191,20 @@ function init_mysql_host () {
 		EOF
 	fi
 
-	mysql_install_db --no-defaults                  \
-		--user="${USER}"                             \
-		--socket="${WORKSPACE}/${engine}/mysql.sock" \
-		--basedir="${MYSQL_DIR}"                     \
-		--datadir="${WORKSPACE}/${engine}/mysql"     \
-		&>"${WORKSPACE}/${engine}/mysql.install.log"
+	if [[ "${MYSQL_DIR}" == '/usr' ]]; then
+		mysql_install_db --no-defaults                  \
+			--user="${USER}"                             \
+			--socket="${WORKSPACE}/${engine}/mysql.sock" \
+			--datadir="${WORKSPACE}/${engine}/mysql"     \
+			&>"${WORKSPACE}/${engine}/mysql.install.log"
+	else
+		mysql_install_db --no-defaults                  \
+			--user="${USER}"                             \
+			--socket="${WORKSPACE}/${engine}/mysql.sock" \
+			--basedir="${MYSQL_DIR}"                     \
+			--datadir="${WORKSPACE}/${engine}/mysql"     \
+			&>"${WORKSPACE}/${engine}/mysql.install.log"
+	fi
 }
 
 function init_httpd_host () {
