@@ -29,6 +29,18 @@ readonly MYSQL_DIR="${MYSQL_DIR:-/usr}"
 ## extra vars ##############################################
 
 readonly DISTRO=$(head -n1 /etc/issue | tr 'A-Z' 'a-z' | awk '{print $1}')
+case "${DISTRO}" in
+	ubuntu)
+		readonly HTTPD_BIN_NAME='apache2'
+		readonly HTTPD_CONF_DIR='/etc/apache2/sites-enabled'
+		;;
+	centos)
+		readonly HTTPD_BIN_NAME='httpd'
+		readonly HTTPD_CONF_DIR='/etc/httpd/conf.d'
+		;;
+	*)
+		fail 'Unsupported distro'
+esac
 
 readonly PATH="${WORKSPACE}:${MYSQL_DIR}/bin:${MYSQL_DIR}/scripts:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export PATH
@@ -77,18 +89,7 @@ function init () {
 	local readonly engine="$1"
 	log
 
-	case "${DISTRO}" in
-		ubuntu)
-			local readonly httpd_bin='apache2'
-			;;
-		centos)
-			local readonly httpd_bin='httpd'
-			;;
-		*)
-			fail 'Unsupported distro'
-	esac
-
-	for dep in "${httpd_bin}" mysqld siege php; do
+	for dep in "${HTTPD_BIN_NAME}" mysqld siege php; do
 		which "${dep}" >/dev/null || fail "Missing dependency: ${dep}"
 	done
 
@@ -204,25 +205,11 @@ function init_httpd_host () {
 	curl -sS 'https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar' > "${WORKSPACE}/wp"
 	chmod 755 "${WORKSPACE}/wp"
 
-	case "${DISTRO}" in
-		ubuntu)
-			local readonly httpd_conf_path='/etc/apache2/sites-enabled'
-			local readonly httpd_service='apache2'
-			;;
-		centos)
-			local readonly httpd_conf_path='/etc/httpd/conf.d'
-			local readonly httpd_service='httpd'
-			;;
-		*)
-			fail 'Unsupported distro'
-			;;
-	esac
-
-	cat <<-EOF | sudo tee "${httpd_conf_path}/wordpress.${engine}.conf" >/dev/null
+	cat <<-EOF | sudo tee "${HTTPD_CONF_DIR}/wordpress.${engine}.conf" >/dev/null
 		Alias /wordpress/${engine} ${WORKSPACE}/${engine}/wordpress
 	EOF
 
-	sudo service "${httpd_service}" restart &>/dev/null
+	sudo service "${HTTPD_BIN_NAME}" restart &>/dev/null
 }
 
 function init_siege_host () {
