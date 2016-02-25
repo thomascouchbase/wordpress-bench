@@ -77,6 +77,21 @@ function init () {
 	local readonly engine="$1"
 	log
 
+	case "${DISTRO}" in
+		ubuntu)
+			local readonly httpd_bin='apache2'
+			;;
+		centos)
+			local readonly httpd_bin='httpd'
+			;;
+		*)
+			fail 'Unsupported distro'
+	esac
+
+	for dep in "${httpd_bin}" mysqld siege php; do
+		which "${dep}" >/dev/null || fail "Missing dependency: ${dep}"
+	done
+
 	configuration
 
 	log 'Prepare workspace on each host'
