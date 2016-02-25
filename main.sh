@@ -207,6 +207,11 @@ function init_httpd_host () {
 
 	cat <<-EOF | sudo tee "${HTTPD_CONF_DIR}/wordpress.${engine}.conf" >/dev/null
 		Alias /wordpress/${engine} ${WORKSPACE}/${engine}/wordpress
+		<Directory "${WORKSPACE}/${engine}/wordpress">
+			Order allow,deny
+			Allow from all
+			Require all granted
+		</Directory>
 	EOF
 
 	sudo service "${HTTPD_BIN_NAME}" restart &>/dev/null
