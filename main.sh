@@ -169,7 +169,7 @@ function init_mysql_host () {
 			table-open-cache = 800
 		EOF
 	fi
-	mysql_install_db --basedir="${MYSQL_DIR}" --datadir="${WORKSPACE}/${engine}/mysql" &>"${WORKSPACE}/${engine}/mysql.install.log"
+	mysql_install_db --no-defaults --user="${USER}" --datadir="${WORKSPACE}/${engine}/mysql" &>"${WORKSPACE}/${engine}/mysql.install.log"
 }
 
 function init_httpd_host () {
