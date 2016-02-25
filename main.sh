@@ -26,6 +26,10 @@ readonly REALTIME_COMMENT_COUNT="${REALTIME_COMMENT_COUNT:-200}"
 
 readonly MYSQL_DIR="${MYSQL_DIR:-/usr}"
 
+## extra vars ##############################################
+
+readonly DISTRO=$(head -n1 /etc/issue | tr 'A-Z' 'a-z' | awk '{print $1}')
+
 readonly PATH="${WORKSPACE}:${MYSQL_DIR}/bin:${MYSQL_DIR}/scripts:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export PATH
 
@@ -176,11 +180,25 @@ function init_httpd_host () {
 	curl -sS 'https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar' > "${WORKSPACE}/wp"
 	chmod 755 "${WORKSPACE}/wp"
 
-	cat <<-EOF | sudo tee "/etc/httpd/conf.d/wordpress.${engine}.conf" >/dev/null
+	case "${DISTRO}" in
+		ubuntu)
+			local readonly httpd_conf_path='/etc/apache2/sites-enabled'
+			local readonly httpd_service='apache2'
+			;;
+		centos)
+			local readonly httpd_conf_path='/etc/httpd/conf.d'
+			local readonly httpd_service='httpd'
+			;;
+		*)
+			fail 'Unsupported distro'
+			;;
+	esac
+
+	cat <<-EOF | sudo tee "${httpd_conf_path}/wordpress.${engine}.conf" >/dev/null
 		Alias /wordpress/${engine} ${WORKSPACE}/${engine}/wordpress
 	EOF
 
-	sudo service httpd restart &>/dev/null
+	sudo service "${httpd_service}" restart &>/dev/null
 }
 
 function init_siege_host () {
@@ -609,6 +627,11 @@ function debug () {
 
 function log () {
 	echo -e "$@"
+}
+
+function fail () {
+	log "$@"
+	exit 1
 }
 
 function indent () {
