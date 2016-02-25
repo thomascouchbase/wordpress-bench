@@ -194,6 +194,7 @@ function init_mysql_host () {
 	mysql_install_db --no-defaults                  \
 		--user="${USER}"                             \
 		--socket="${WORKSPACE}/${engine}/mysql.sock" \
+		--basedir="${MYSQL_DIR}"                     \
 		--datadir="${WORKSPACE}/${engine}/mysql"     \
 		&>"${WORKSPACE}/${engine}/mysql.install.log"
 }
