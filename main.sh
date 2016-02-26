@@ -354,7 +354,7 @@ function setup_wordpress_database () {
 		else
 			(mysqld --defaults-file="${WORKSPACE}/${engine}/mysql.conf" &>"${WORKSPACE}/${engine}/mysql.log" &)
 		fi
-		mysqladmin --socket="${WORKSPACE}/${engine}/mysql.sock" --wait=1 --connect-timeout=10 ping
+		mysqladmin --socket="${WORKSPACE}/${engine}/mysql.sock" --wait=3 --connect-timeout=15 ping
 
 		mysql -uroot --socket="${WORKSPACE}/${engine}/mysql.sock" <<-EOF
 		drop database if exists wordpress;
