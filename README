@@ -22,9 +22,10 @@ README
 
   The following programs must be installed:
 
-    * MySQL < 5.7 (`mysqld`, `mysql_install_db`)
-    * Apache >= 2.2.15 (`httpd`, `rc.d` initscripts)
-    * Siege >= 3.0.8 (`siege`, see https://www.joedog.org/siege-home/)
+    * PHP >= 5.5, PHP-MySQL
+    * MySQL < 5.7
+    * Apache >= 2.2.15
+    * Siege >= 3.0.8
 
   The script also assumes that the user has `sudo` access (to install `httpd`
   configs) and that the `$REMOTE_USER` has SSH access to the remote hosts.
