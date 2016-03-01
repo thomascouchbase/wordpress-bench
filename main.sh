@@ -154,6 +154,8 @@ function init_mysql_host () {
 			[mysqld]
 			basedir = ${MYSQL_DIR}
 			datadir = ${WORKSPACE}/deep/mysql
+
+			skip-networking = true
 			socket = ${WORKSPACE}/deep/mysql.sock
 
 			plugin-load = ha_deep.so
@@ -175,6 +177,8 @@ function init_mysql_host () {
 			[mysqld]
 			basedir = ${MYSQL_DIR}
 			datadir = ${WORKSPACE}/innodb/mysql
+
+			skip-networking = true
 			socket = ${WORKSPACE}/innodb/mysql.sock
 
 			default-storage-engine = InnoDB
