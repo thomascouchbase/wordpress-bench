@@ -97,9 +97,9 @@ function init () {
 	configuration
 
 	log 'Prepare workspace on each host'
-	on 'mysql' "rm -rf ${WORKSPACE};"
-	on 'httpd' "rm -rf ${WORKSPACE};"
-	on 'siege' "rm -rf ${WORKSPACE};"
+	on 'mysql' "sudo rm -rf ${WORKSPACE};"
+	on 'httpd' "sudo rm -rf ${WORKSPACE};"
+	on 'siege' "sudo rm -rf ${WORKSPACE};"
 
 	on 'mysql' "mkdir -p ${WORKSPACE}/${engine}/mysql"
 	on 'httpd' "mkdir -p ${WORKSPACE}/${engine}/wordpress"
