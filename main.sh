@@ -479,15 +479,19 @@ function generate_static_woocommerce_data () {
 	log "Generate ${static_product_count} WooCommerce products"
 	{
 		timer 'start'
-		local max_per_round=$(( ${static_product_count} / 5 ))
 		local count=0
+		local prev=0
 		local start_utc=0
 		while (( ${count} < ${static_product_count} )); do
 			start_utc=$(date +%s)
-			curl -sSL --max-time $(( 60*15 )) --retry 5 --cookie "${WORKSPACE}/${engine}/cookie" --data "max=${max_per_round}&submit=Run&action=generate" \
-				"http://${HTTPD_SERVER}/wordpress/${engine}/wp-admin/admin.php?page=product-generator" >/dev/null
-			((count+=${max_per_round}))
-			log "Generated ${count} products ($(bc <<< "scale=1; (${count} / ${static_product_count}) * 100")%) [ ${max_per_round} in $(minsec $(( $(date +%s) - ${start_utc} ))) ]"
+			prev=$(wp db query --quiet 'select count(*) from wp_posts where post_type = "product";' | tail -n1)
+			for i in {1..10}; do
+				(curl -sSL --max-time $(( 60*15 )) --cookie "${WORKSPACE}/${engine}/cookie" --data "max=$(( (${static_product_count} - ${count}) / 10 ))&submit=Run&action=generate" \
+					"http://${HTTPD_SERVER}/wordpress/${engine}/wp-admin/admin.php?page=product-generator" >/dev/null || true) &
+			done
+			wait
+			count=$(wp db query --quiet 'select count(*) from wp_posts where post_type = "product";' | tail -n1)
+			log "${count} products ($(bc <<< "scale=1; (${count} / ${static_product_count}) * 100")%) [ $(( ${count} - ${prev} )) in $(minsec $(( $(date +%s) - ${start_utc} ))) ]"
 		done
 		timer 'stop'
 	} |& indent
@@ -577,8 +581,8 @@ function generate_realtime_woocommerce_data () {
 		local iters=1
 		while [[ -e "${WORKSPACE}/${engine}/.realtime" ]]; do
 			log "Generating ${realtime_product_count} products (round ${iters} @ $(date +%H:%M:%S))"
-			curl -sSL --max-time $(( 60*15 )) --retry 5 --cookie "${WORKSPACE}/${engine}/cookie" --data "max=${realtime_product_count}&submit=Run&action=generate" \
-				"http://${HTTPD_SERVER}/wordpress/${engine}/wp-admin/admin.php?page=product-generator" >/dev/null
+			curl -sSL --max-time $(( 60*15 )) --cookie "${WORKSPACE}/${engine}/cookie" --data "max=${realtime_product_count}&submit=Run&action=generate" \
+				"http://${HTTPD_SERVER}/wordpress/${engine}/wp-admin/admin.php?page=product-generator" >/dev/null || true
 			((iters+=1))
 			sleep 2
 		done
