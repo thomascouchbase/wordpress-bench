@@ -164,10 +164,10 @@ function init_mysql_host () {
 			default-tmp-storage-engine = Deep
 			transaction-isolation = repeatable-read
 
-			deep-log-level-debug = on
-			deep-log-level-info = on
-			deep-log-level-warn = on
-			deep-log-level-error = on
+			deep-log-level-debug = off
+			deep-log-level-info = off
+			deep-log-level-warn = off
+			deep-log-level-error = off
 
 			deep-cache-size = 6G
 			deep-mode-durable = off
