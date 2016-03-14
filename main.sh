@@ -42,6 +42,7 @@ case "${DISTRO}" in
 		fail 'Unsupported distro'
 esac
 
+readonly STATIC_PRODUCT_JOBS=10
 readonly SIEGE_MIN_TIME="5M"
 readonly SIEGE_RECOVERY_TIME="60s"
 
@@ -481,17 +482,27 @@ function generate_static_woocommerce_data () {
 	log "Generate ${static_product_count} WooCommerce products"
 	{
 		timer 'start'
+		local max_per_client="${static_product_count}"
+
 		local count=0
 		local prev=0
 		local start_utc=0
+
 		while (( ${count} < ${static_product_count} )); do
+			max_per_client=$(( (${static_product_count} - ${count}) / ${STATIC_PRODUCT_JOBS} ))
+			if [[ "${max_per_client}" -eq 0 ]]; then
+				max_per_client=1
+			fi
+
 			start_utc=$(date +%s)
 			prev=$(wp db query --quiet 'select count(*) from wp_posts where post_type = "product";' | tail -n1)
-			for i in {1..10}; do
-				(curl -sSL --max-time $(( 60*15 )) --cookie "${WORKSPACE}/${engine}/cookie" --data "max=$(( (${static_product_count} - ${count}) / 10 ))&submit=Run&action=generate" \
+
+			for i in $(seq 1 "${STATIC_PRODUCT_JOBS}"); do
+				(curl -sSL --max-time $(( 60*15 )) --cookie "${WORKSPACE}/${engine}/cookie" --data "max=${max_per_client}&submit=Run&action=generate" \
 					"http://${HTTPD_SERVER}/wordpress/${engine}/wp-admin/admin.php?page=product-generator" >/dev/null || true) &
 			done
 			wait
+
 			count=$(wp db query --quiet 'select count(*) from wp_posts where post_type = "product";' | tail -n1)
 			log "${count} products ($(bc <<< "scale=1; (${count} / ${static_product_count}) * 100")%) [ $(( ${count} - ${prev} )) in $(minsec $(( $(date +%s) - ${start_utc} ))) ]"
 		done
