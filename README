@@ -52,10 +52,11 @@ PARAMETERS
 
                     Default: localhost
 
-    `SIEGE_TIME`    The siege duration during the benchmark's first phase.
-                    Includes the unit ("S", "M", "H"), eg: `60S` or `5M`.
+    `SIEGE_TIME`    The maximum allowed siege duration, excluding the
+                    benchmark's first phase which is limited to five minutes.
+                    Includes the "S", "M", or "H" unit, eg: `60S` or `5M`.
 
-                    Default: 5M
+                    Default: 30M
 
     `SIEGE_USERS`   The number of concurrent siege users.
 

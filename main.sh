@@ -15,7 +15,7 @@ readonly MYSQL_SERVER="${MYSQL_SERVER:-localhost}"
 readonly HTTPD_SERVER="${HTTPD_SERVER:-localhost}"
 readonly SIEGE_SERVER="${SIEGE_SERVER:-localhost}"
 
-readonly SIEGE_TIME="${SIEGE_TIME:-5M}"
+readonly SIEGE_TIME="${SIEGE_TIME:-30M}"
 readonly SIEGE_USERS="${SIEGE_USERS:-50}"
 
 readonly STATIC_PRODUCT_COUNT="${STATIC_PRODUCT_COUNT:-100}"
@@ -26,7 +26,7 @@ readonly REALTIME_COMMENT_COUNT="${REALTIME_COMMENT_COUNT:-200}"
 
 readonly MYSQL_DIR="${MYSQL_DIR:-/usr}"
 
-## extra vars ##############################################
+## internal vars ###########################################
 
 readonly DISTRO=$(head -n1 /etc/issue | tr 'A-Z' 'a-z' | awk '{print $1}')
 case "${DISTRO}" in
@@ -41,6 +41,9 @@ case "${DISTRO}" in
 	*)
 		fail 'Unsupported distro'
 esac
+
+readonly SIEGE_MIN_TIME="5M"
+readonly SIEGE_RECOVERY_TIME="60s"
 
 readonly PATH="${WORKSPACE}:${MYSQL_DIR}/bin:${MYSQL_DIR}/scripts:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export PATH
@@ -245,16 +248,15 @@ function init_siege_host () {
 		quiet = true
 		protocol = HTTP/1.1
 
+		time = "${SIEGE_TIME}"
 		concurrent = ${SIEGE_USERS}
-		#time = ${SIEGE_TIME}
 
-		benchmark = false
+		benchmark = true
 		chunked = true
-		delay = 2
+		delay = 1
 		expire-session = true
 		failures = 8192
 		#internet = true
-		quiet = false
 		#reps = once
 		show-logfile = false
 		spinner = false
@@ -642,7 +644,7 @@ function start_siege () {
 	{
 		if [[ "${against%%:*}" == url ]]; then
 			siege --rc="${WORKSPACE}/siegerc" \
-				--mark="${message}" --log="${WORKSPACE}/${engine}/siege.log" --time="${SIEGE_TIME}" "${against#*:}"
+				--mark="${message}" --log="${WORKSPACE}/${engine}/siege.log" --time="${SIEGE_MIN_TIME}" "${against#*:}"
 		elif [[ "${against%%:*}" == file ]]; then
 			siege --rc="${WORKSPACE}/siegerc" \
 				--mark="${message}" --log="${WORKSPACE}/${engine}/siege.log" --reps=once --file=<(shuf "${against#*:}")
@@ -650,8 +652,8 @@ function start_siege () {
 		echo >> "${WORKSPACE}/${engine}/siege.log"
 	} |& tail -n+6 | sed -e 's/:\s\+/:\t/g' | column -ts $'\t' | indent
 
-	log 'Sleeping 60s to recover from siege...' |& indent
-	sleep 60
+	log "Sleeping ${SIEGE_RECOVERY_TIME} to recover from siege..." |& indent
+	sleep "${SIEGE_RECOVERY_TIME}"
 }
 
 function capture_metrics () {
