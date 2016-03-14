@@ -151,7 +151,7 @@ function init_mysql_host () {
 
 	log "Initialize MySQL host ($(hostname -s))"
 
-	killall --user "${USER}" --quiet -9 mysqld || true
+	killall --wait --user "${USER}" --quiet -9 mysqld || true
 
 	if [[ "${engine}" == deep ]]; then
 		cat > "${WORKSPACE}/deep/mysql.conf" <<-EOF
@@ -345,7 +345,7 @@ function bench () {
 }
 
 function fin () {
-	on 'mysql' "killall --user '${USER}' --quiet mysqld"
+	on 'mysql' "killall --wait --user '${USER}' --quiet mysqld"
 	on 'httpd' "sudo rm -f ${HTTPD_CONF_DIR}/wordpress-bench.deep.conf ${HTTPD_CONF_DIR}/wordpress-bench.innodb.conf"
 }
 
