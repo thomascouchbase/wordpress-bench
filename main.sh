@@ -282,7 +282,7 @@ function bench () {
 	on 'mysql' call 'setup_wordpress_database' "${engine}"
 	on 'httpd' call 'install_wordpress_base' "${engine}"
 	on 'siege' call 'start_siege' "${engine}" "'phase-01: base wordpress'" "'url:http://${HTTPD_SERVER}/wordpress/${engine}/'"
-	on 'mysql' call 'capture_metrics' "${engine}"
+	capture_metrics "${engine}"
 	timer 'stop'
 	log
 
@@ -294,7 +294,7 @@ function bench () {
 	on 'httpd' call 'generate_static_woocommerce_data' "${engine}"
 	on 'httpd' call 'generate_siege_url_list' "${engine}" | on 'siege' "cat - > ${WORKSPACE}/${engine}/urls"
 	on 'siege' call 'start_siege' "${engine}" "'phase-02: woocommerce static data'" "'file:${WORKSPACE}/${engine}/urls'"
-	on 'mysql' call 'capture_metrics' "${engine}"
+	capture_metrics "${engine}"
 	timer 'stop'
 	log
 
@@ -311,7 +311,7 @@ function bench () {
 	on 'httpd' call 'generate_realtime_woocommerce_data' "${engine}"
 	cat "${siege_file}"
 	rm "${siege_file}"
-	on 'mysql' call 'capture_metrics' "${engine}"
+	capture_metrics "${engine}"
 	timer 'stop'
 	log
 
@@ -321,7 +321,7 @@ function bench () {
 	timer 'start'
 	on 'httpd' call 'install_additional_plugins' "${engine}"
 	on 'siege' call 'start_siege' "${engine}" "'phase-04: common plugins'" "'file:${WORKSPACE}/${engine}/urls'"
-	on 'mysql' call 'capture_metrics' "${engine}"
+	capture_metrics "${engine}"
 	timer 'stop'
 	log
 
@@ -338,7 +338,7 @@ function bench () {
 	on 'httpd' call 'generate_realtime_woocommerce_data' "${engine}"
 	cat "${siege_file}"
 	rm "${siege_file}"
-	on 'mysql' call 'capture_metrics' "${engine}"
+	capture_metrics "${engine}"
 	timer 'stop'
 	log
 
@@ -672,12 +672,14 @@ function start_siege () {
 
 function capture_metrics () {
 	local readonly engine="$1"
-
-	cat <(du -sh "${WORKSPACE}/${engine}/mysql/wordpress/";) \
-		>>"${WORKSPACE}/${engine}/du" 2>/dev/null
 	
-	uptime | sed -e 's/.*load/load/' \
-		>>"${WORKSPACE}/${engine}/load"
+	for host in mysql httpd siege; do
+		on "${host}" 'uptime | sed -e "s/.*load/load/"' \
+			>>"${WORKSPACE}/${engine}/load.${host}"
+	done
+
+	on 'mysql' call "cat <(du -sh '${WORKSPACE}/${engine}/mysql/wordpress/')" \
+		>>"${WORKSPACE}/${engine}/du"
 }
 
 ## utility #################################################
