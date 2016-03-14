@@ -418,11 +418,11 @@ function install_wordpress_base () {
 	log 'Generate users in standard roles'
 	{
 		timer 'start'
-		wp user generate --quiet --count=50    --role='administrator'
-		wp user generate --quiet --count=100   --role='editor'
-		wp user generate --quiet --count=500   --role='author'
-		wp user generate --quiet --count=750   --role='contributor'
-		wp user generate --quiet --count=10000 --role='subscriber'
+		wp user generate --quiet --count=50   --role='administrator'
+		wp user generate --quiet --count=100  --role='editor'
+		wp user generate --quiet --count=500  --role='author'
+		wp user generate --quiet --count=750  --role='contributor'
+		wp user generate --quiet --count=1000 --role='subscriber'
 		timer 'stop'
 	} |& indent
 }
@@ -473,7 +473,7 @@ function generate_static_woocommerce_data () {
 	{
 		timer 'start'
 		wp user generate --quiet --count=100 --role='shop_manager'
-		wp user generate --quiet --count=100000 --role='customer'
+		wp user generate --quiet --count=5000 --role='customer'
 		timer 'stop'
 	} |& indent
 
@@ -540,6 +540,8 @@ function generate_siege_url_list () {
 		echo "http://${HTTPD_SERVER}/wordpress/${engine}/?post_type=product"
 		echo "http://${HTTPD_SERVER}/wordpress/${engine}/?post_type=product"
 		echo "http://${HTTPD_SERVER}/wordpress/${engine}/?post_type=product"
+		echo "http://${HTTPD_SERVER}/wordpress/${engine}/wp-login.php"
+		echo "http://${HTTPD_SERVER}/wordpress/${engine}/wp-login.php POST log=${engine}&pwd=${engine}&testcookie=1&rememberme=forever"
 		echo "http://${HTTPD_SERVER}/wordpress/${engine}/?page_id=${my_account_page_id}"
 		echo "http://${HTTPD_SERVER}/wordpress/${engine}/?page_id=${cart_page_id}"
 		echo "http://${HTTPD_SERVER}/wordpress/${engine}/?page_id=${cart_page_id}"
@@ -600,7 +602,6 @@ function generate_realtime_woocommerce_data () {
 			curl -sSL --max-time $(( 60*15 )) --cookie "${WORKSPACE}/${engine}/cookie" --data "max=${realtime_product_count}&submit=Run&action=generate" \
 				"http://${HTTPD_SERVER}/wordpress/${engine}/wp-admin/admin.php?page=product-generator" >/dev/null || true
 			((iters+=1))
-			sleep 2
 		done
 	} |& indent) &
 
@@ -617,7 +618,6 @@ function generate_realtime_woocommerce_data () {
 			EOF
 			seq 1 $(( ${static_comment_count} + (${realtime_comment_count} * ${iters}) )) | xargs wp comment recount --quiet
 			((iters+=1))
-			sleep 2
 		done
 	} |& indent) &
 	wait
