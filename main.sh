@@ -268,6 +268,8 @@ function init_siege_host () {
 function bench () {
 	local readonly engine="$1"
 
+	timer 'start'
+
 	log "------------------------------------------------------------"
 	log "Starting benchmark for ${engine}"
 	log "------------------------------------------------------------"
@@ -341,6 +343,7 @@ function bench () {
 	log
 
 	log "Benchmark complete. See results in ${WORKSPACE}/${engine}"
+	timer 'stop'
 	log
 }
 
