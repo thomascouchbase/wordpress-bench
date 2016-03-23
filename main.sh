@@ -674,12 +674,10 @@ function capture_metrics () {
 	local readonly engine="$1"
 	
 	for host in mysql httpd siege; do
-		on "${host}" 'uptime | sed -e "s/.*load/load/"' \
-			>>"${WORKSPACE}/${engine}/load.${host}"
+		on "${host}" "uptime | sed -e 's/.*load/load/' >>${WORKSPACE}/${engine}/load.${host}"
 	done
 
-	on 'mysql' call "cat <(du -sh '${WORKSPACE}/${engine}/mysql/wordpress/')" \
-		>>"${WORKSPACE}/${engine}/du"
+	on 'mysql' call "cat <(du -sh '${WORKSPACE}/${engine}/mysql/wordpress/') >>${WORKSPACE}/${engine}/du"
 }
 
 ## utility #################################################
