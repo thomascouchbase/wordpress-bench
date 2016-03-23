@@ -44,9 +44,9 @@ case "${DISTRO}" in
 		fail 'Unsupported distro'
 esac
 
-readonly STATIC_PRODUCT_JOBS=10
-readonly SIEGE_MIN_TIME="5M"
-readonly SIEGE_RECOVERY_TIME="60s"
+readonly STATIC_PRODUCT_JOBS="${STATIC_PRODUCT_JOBS:-10}"
+readonly SIEGE_MIN_TIME="${SIEGE_MIN_TIME:-5M}"
+readonly SIEGE_RECOVERY_TIME="${SIEGE_RECOVERY_TIME:-60s}"
 
 readonly PATH="${WORKSPACE}:${MYSQL_DIR}/bin:${MYSQL_DIR}/scripts:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export PATH
@@ -140,6 +140,10 @@ function init () {
 		export MYSQL_DIR="${MYSQL_DIR}"
 
 		export PATH="${WORKSPACE}:${MYSQL_DIR}/bin:${MYSQL_DIR}/scripts:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+		export STATIC_PRODUCT_JOBS="${STATIC_PRODUCT_JOBS}"
+		export SIEGE_MIN_TIME="${SIEGE_MIN_TIME}"
+		export SIEGE_RECOVERY_TIME="${SIEGE_RECOVERY_TIME}"
 		EOF
 	done
 
