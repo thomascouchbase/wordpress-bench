@@ -24,6 +24,8 @@ readonly STATIC_COMMENT_COUNT="${STATIC_COMMENT_COUNT:-1000}"
 readonly REALTIME_PRODUCT_COUNT="${REALTIME_PRODUCT_COUNT:-100}"
 readonly REALTIME_COMMENT_COUNT="${REALTIME_COMMENT_COUNT:-200}"
 
+readonly MYSQL_CACHE_SIZE="${MYSQL_CACHE_SIZE:-6G}"
+
 readonly MYSQL_DIR="${MYSQL_DIR:-/usr}"
 
 ## internal vars ###########################################
@@ -133,6 +135,8 @@ function init () {
 		export REALTIME_PRODUCT_COUNT="${REALTIME_PRODUCT_COUNT}"
 		export REALTIME_COMMENT_COUNT="${REALTIME_COMMENT_COUNT}"
 
+		export MYSQL_CACHE_SIZE="${MYSQL_CACHE_SIZE}"
+
 		export MYSQL_DIR="${MYSQL_DIR}"
 
 		export PATH="${WORKSPACE}:${MYSQL_DIR}/bin:${MYSQL_DIR}/scripts:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -171,7 +175,7 @@ function init_mysql_host () {
 			deep-log-level-warn = off
 			deep-log-level-error = off
 
-			deep-cache-size = 6G
+			deep-cache-size = ${MYSQL_CACHE_SIZE}
 			deep-mode-durable = off
 		EOF
 	elif [[ "${engine}" == innodb ]]; then
@@ -185,7 +189,7 @@ function init_mysql_host () {
 			default-tmp-storage-engine = InnoDB
 			transaction-isolation = repeatable-read
 
-			innodb-buffer-pool-size = 6G
+			innodb-buffer-pool-size = ${MYSQL_CACHE_SIZE}
 			innodb-log-file-size = 1G
 			innodb-flush-log-at-trx-commit = 2
 			query-cache-size = 8M

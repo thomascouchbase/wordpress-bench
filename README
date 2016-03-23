@@ -73,6 +73,11 @@ PARAMETERS
 
                               Default: 100 products, 200 comments
 
+    `MYSQL_CACHE_SIZE`        The maximum allowed amount of system memory that
+                              may be allocated to mysqld.
+
+                              Default: 6G
+
   Additionally, the following parameter may be provided in order to use a
   non-standard MySQL installation path:
 
