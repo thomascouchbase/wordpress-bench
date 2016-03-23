@@ -44,6 +44,7 @@ case "${DISTRO}" in
 		fail 'Unsupported distro'
 esac
 
+readonly DEEP_LOGGING="${DEEP_LOGGING:-off}"
 readonly STATIC_PRODUCT_JOBS="${STATIC_PRODUCT_JOBS:-10}"
 readonly SIEGE_MIN_TIME="${SIEGE_MIN_TIME:-5M}"
 readonly SIEGE_RECOVERY_TIME="${SIEGE_RECOVERY_TIME:-60s}"
@@ -141,6 +142,7 @@ function init () {
 
 		export PATH="${WORKSPACE}:${MYSQL_DIR}/bin:${MYSQL_DIR}/scripts:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+		export DEEP_LOGGING="${DEEP_LOGGING}"
 		export STATIC_PRODUCT_JOBS="${STATIC_PRODUCT_JOBS}"
 		export SIEGE_MIN_TIME="${SIEGE_MIN_TIME}"
 		export SIEGE_RECOVERY_TIME="${SIEGE_RECOVERY_TIME}"
@@ -174,10 +176,10 @@ function init_mysql_host () {
 			default-tmp-storage-engine = Deep
 			transaction-isolation = repeatable-read
 
-			deep-log-level-debug = off
-			deep-log-level-info = off
-			deep-log-level-warn = off
-			deep-log-level-error = off
+			deep-log-level-debug = ${DEEP_LOGGING}
+			deep-log-level-info = ${DEEP_LOGGING}
+			deep-log-level-warn = ${DEEP_LOGGING}
+			deep-log-level-error = ${DEEP_LOGGING}
 
 			deep-cache-size = ${MYSQL_CACHE_SIZE}
 			deep-mode-durable = off
