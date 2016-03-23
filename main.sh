@@ -255,7 +255,7 @@ function init_siege_host () {
 		quiet = true
 		protocol = HTTP/1.1
 
-		time = "${SIEGE_TIME}"
+		time = ${SIEGE_TIME}
 		concurrent = ${SIEGE_USERS}
 
 		benchmark = true
