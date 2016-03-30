@@ -1,0 +1,1567 @@
+#!/usr/bin/env bash
+
+set -o nounset
+set -o pipefail
+#set -o xtrace
+
+version=1.0
+
+# early-space globals
+flag_debug=${DEBUG-false}
+flag_trace=${TRACE-false}
+flag_args=${ARGS-false}
+
+# globals defined for $self and callables
+childpids=
+indent=
+timers=
+elapsed=
+
+PATH='/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin'
+
+usage() {
+	echo "
+wordpress benchmark version $version
+
+Usage: $0 [engine] [options]
+
+   Run WordPress Benchmark against specified engine ('deep' or 'innodb').
+
+   Options (provided as '--option=value'):
+
+      --mysqld-server        Address or domain of mysqld server
+      --apache-server        Address or domain of apache server
+      --siege-server         Address or domain of siege server
+
+      --mysqld-basedir       Directory containing MySQL installation files
+      --mysqld-cache-size    Amount of memory mysqld should allocate
+      --mysqld-port          Port that mysqld should listen on
+
+      --cache-adjust-size    During benchmark, adjust cache to this amount
+      --deepsql-logs         Enable/disable deep log messages
+
+      --siege-max-time       Maximum runtime of a siege
+      --siege-min-time       Minimum runtime of a siege
+      --siege-recovery-time  Amount of time to sleep after each siege
+      --siege-concurrency    Number of concurrent clients siege should simulate
+
+      --scale-factor         Linear scalar applied to products and comments
+      --static-products      Number of products to generate
+      --static-comments      Number of comments to generate
+      --realtime-products    Number of products to generate while under load
+      --realtime-comments    Number of comments to generate while under load
+
+      --ssh-user             Username to use for remote connections
+      --workspace            Directory to use during benchmark
+      --resultsdir           Directory to use when archiving results
+      --keep                 Whether or not to keep results of this run
+"
+	exit
+}
+
+version() {
+   echo "wordpress benchmark version $version"
+   exit
+}
+
+## main ####################################################
+
+main() {
+	trace "$@"
+	setup_traps
+	assert_self
+
+	set_globals
+	parse_args "$@"
+
+	configuration
+	initialize
+	benchmark
+}
+
+assert_self() {
+	trace "$@"
+	assert_supported_distro
+	assert_base_cmds
+}
+
+set_globals() {
+	trace "$@"
+
+	### internal globals for $self:
+	###   - not forwarded via $workspace/params
+	###   - not available in callables
+
+	self="${0##*/}"
+	artifacts=
+	params=
+	phase=
+	ssh_key=
+	tmpdir=
+
+	### public globals holding script parameters:
+	###   - forwarded via $workspace/params
+	###   - available in callables
+
+	param 'engine' "${engine=innodb}"
+
+	param 'mysqld_server' "${mysqld_server=localhost}"
+	param 'apache_server' "${apache_server=localhost}"
+	param 'siege_server'  "${siege_server=localhost}"
+
+	param 'mysqld_basedir' "${mysqld_basedir=/usr}"
+	param 'mysqld_cache_size' "${mysqld_cache_size=$(get_memory_size 0.65 'g')g}"
+	param 'mysqld_port' "${mysqld_port=3306}"
+
+	param 'cache_adjust_size' "${cache_adjust_size=$(get_memory_size 0.95 'g')g}"
+	param 'deepsql_logs' "${deepsql_logs=off}"
+
+	param 'siege_max_time' "${siege_max_time=60m}"
+	param 'siege_min_time' "${siege_min_time=5m}"
+	param 'siege_recovery_time' "${siege_recovery_time=15m}"
+	param 'siege_concurrency' "${siege_concurrency=100}"
+
+	param 'scale_factor' "${scale_factor=1}"
+	param 'static_products' "${static_products=2000}"
+	param 'static_comments' "${static_comments=5000}"
+	param 'realtime_products' "${realtime_products=100}"
+	param 'realtime_comments' "${realtime_comments=200}"
+
+	param 'ssh_user' "${ssh_user=$USER}"
+	param 'workspace' "${workspace=/tmp/workspace}"
+	param 'resultsdir' "${resultsdir=$PWD/results}"
+	param 'flag_keep' "${flag_keep=true}"
+
+	param 'flag_debug' "${flag_debug=true}"
+	param 'flag_trace' "${flag_debug=true}"
+	param 'flag_args' "${flag_args=true}"
+}
+
+parse_args() {
+	trace "$@"
+	local _arg=
+	for _arg; do
+		case "$_arg" in
+			-h | --help) usage ;;
+			--debug) flag_debug=true ;;
+			--trace) flag_trace=true ;;
+			--args)  flag_args=true ;;
+
+			--keep) flag_keep=true ;;
+			--no-keep) flag_keep=false ;;
+
+			deep | innodb)
+				engine="$_arg"
+				;;
+		esac
+
+		if is_arg 'mysqld-server' "$_arg"; then
+			mysqld_server="$(get_val "$_arg")"
+		elif is_arg 'apache-server' "$_arg"; then
+			apache_server="$(get_val "$_arg")"
+		elif is_arg 'siege-server' "$_arg"; then
+			siege_server="$(get_val "$_arg")"
+
+		elif is_arg 'mysqld-basedir' "$_arg"; then
+			mysqld_basedir="$(get_val "$_arg")"
+		elif is_arg 'mysqld-port' "$_arg"; then
+			mysqld_port="$(get_val "$_arg")"
+		elif is_arg 'mysqld-cache-size' "$_arg"; then
+			mysqld_cache_size="$(get_val "$_arg")"
+
+		elif is_arg 'deepsql-logs' "$_arg"; then
+			deepsql_logs="$(get_val "$_arg")"
+
+		elif is_arg 'siege-max-time' "$_arg"; then
+			siege_max_time="$(get_val "$_arg")"
+		elif is_arg 'siege-min-time' "$_arg"; then
+			siege_min_time="$(get_val "$_arg")"
+		elif is_arg 'siege-recovery-time' "$_arg"; then
+			siege_recovery_time="$(get_val "$_arg")"
+		elif is_arg 'siege-users' "$_arg"; then
+			siege_concurrency="$(get_val "$_arg")"
+
+		elif is_arg 'scale-factor' "$_arg"; then
+			scale_factor="$(get_val "$_arg")"
+		elif is_arg 'products' "$_arg"; then
+			static_products="$(get_val "$_arg")"
+		elif is_arg 'comments' "$_arg"; then
+			static_comments="$(get_val "$_arg")"
+		elif is_arg 'realtime-products' "$_arg"; then
+			realtime_products="$(get_val "$_arg")"
+		elif is_arg 'realtime-comments' "$_arg"; then
+			realtime_comments="$(get_val "$_arg")"
+
+		elif is_arg 'ssh-user' "$_arg"; then
+			ssh_user="$(get_val "$_arg")"
+		elif is_arg 'workspace' "$_arg"; then
+			workspace="$(get_val "$_arg")"
+		elif is_arg 'resultsdir' "$_arg"; then
+			resultsdir="$(get_val "$_arg")"
+		fi
+	done
+
+	if [[ "$scale_factor" != 1 ]]; then
+		static_products="$(bc <<< "scale=0; ($scale_factor * $static_products) / 1")"
+		static_comments="$(bc <<< "scale=0; ($scale_factor * $static_comments) / 1")"
+		realtime_products="$(bc <<< "scale=0; ($scale_factor * $realtime_products) / 1")"
+		realtime_comments="$(bc <<< "scale=0; ($scale_factor * $realtime_comments) / 1")"
+	fi
+
+	update_path
+}
+
+configuration() {
+	local readonly _strs=(
+		"$mysqld_server"      "$ssh_user"
+		"$apache_server"      "$workspace"
+		"$siege_server"       "$resultsdir"
+		"$engine"             "$siege_max_time"       "$scale_factor"
+		"$mysqld_cache_size"  "$siege_recovery_time"  "$static_products"
+		"$cache_adjust_size"  "$siege_concurrency"    "$static_comments"
+	)
+
+	cat <<-EOF | printf -- "$(cat -)" "${_strs[@]}"
+		---------------------------------------------------------------------------
+
+		  wordpress benchmark version $version
+
+		  mysqld: %15s   ssh-user:   %-32s
+		  apache: %15s   workspace:  %-32s
+		  siege:  %15s   resultsdir: %-32s
+
+		  engine: %15s   siege-max-time: %8s   scale-factor: %2.1fx
+		  mysqld-cache-size: %4s   siege-recovery-time: %3s   products: %'8d
+		  cache-adjust-size: %4s   siege-concurrency: %5s   comments: %'8d
+
+		---------------------------------------------------------------------------
+	EOF
+	newline
+	newline
+}
+
+initialize() {
+	trace "$@"
+
+	tmpdir=$(make_temp_dir 'wb.XXX')
+
+	h1 'Initialize servers'
+
+	if using_remote_server; then
+		need_cmd ssh
+		need_cmd ssh-keygen
+		need_cmd ssh-copy-id
+		need_cmd scp
+
+		local _server
+
+		li 'Verify ssh connection to remote servers'
+		for _server in $(get_remote_servers); do
+			debug "verify ssh connection to $_server"
+			if ! ssh -q "$ssh_user@$_server" 'exit'; then
+				fail "$(concat "failed to connect to $ssh_user@$_server"$'\n\n'                      \
+									"   Ensure that there is an ssh identity defined for this server and" \
+									"   that the public key is in the server's authorized_keys file.")"
+			fi
+		done
+
+		li 'Install temporary ssh key on remote servers'
+		debug 'create tmp ssh key'
+		ssh_key="$tmpdir/key"
+		run ssh-keygen -q -t rsa -N '' -C 'wordpress-bench-key' -f "$ssh_key"
+
+		for _server in $(get_remote_servers); do
+			debug "copy tmp key to $_server"
+			run redirect '/dev/null' ssh-copy-id -i "${ssh_key}.pub" "$ssh_user@$_server"
+			artifact "key:$_server"
+		done
+
+		debug 'make params file'
+		local _param
+		for _param in $params; do
+			echo "$_param=${!_param}"
+		done >"$tmpdir/params"
+
+		li 'Install script on remote servers'
+		for _server in $(get_remote_servers); do
+			debug "mkdir $workspace on $_server"
+			on "$_server" run "mkdir -p $workspace"
+			artifact "workspace:$_server"
+
+			debug "copy self to $_server"
+			run rcmd 'scp' "$0" "$ssh_user@[$_server]:$workspace/$self"
+
+			debug "copy params file to $_server"
+			run rcmd 'scp' "$tmpdir/params" "$ssh_user@[$_server]:$workspace/params"
+		done
+	fi
+
+	run on "$mysqld_server" call 'init_mysqld_server'
+	artifact 'mysqld_process'
+
+	run on "$apache_server" call 'init_apache_server'
+	artifact 'apache_config_file'
+
+	run on "$siege_server"  call 'init_siege_server'
+}
+
+benchmark() {
+	trace "$@"
+	newline
+	timer 'start'
+
+	local _phase=0
+	phase_start 'Base WordPress installation'
+	run on "$mysqld_server" call 'setup_wordpress_database'
+	run on "$apache_server" call 'install_wordpress_base'
+	run on "$siege_server"  call 'start_siege' 'base_wordpress' "url:http://$apache_server/wordpress/$engine/"
+	finish
+
+
+	phase_start 'WooCommerce with static data'
+	run on "$apache_server" call 'install_woocommerce_plugins'
+	run on "$apache_server" call 'generate_woocommerce_data' 'static'
+	run on "$apache_server" call 'build_siege_url_list'
+	if ! is_localhost "$siege_server"; then
+		run rcmd 'scp' "$ssh_user@[$apache_server]:$workspace/urls" "$tmpdir/urls"
+		run rcmd 'scp' "$tmpdir/urls" "$ssh_user@[$siege_server]:$workspace/urls"
+	fi
+	run on "$siege_server"  call 'start_siege' 'woocommerce_static' "file:$workspace/urls"
+	finish
+
+
+	phase_start 'Realtime data and siege'
+	local readonly _lockfile="$workspace/realtime-data-siege.lock"
+	run on "$apache_server" run touch "$_lockfile"
+	li 'Start a siege'
+	( run on "$siege_server"  call 'start_siege' 'realtime_data_siege' "file:$workspace/urls"
+	  run on "$apache_server" run rm "$_lockfile" ) >"$tmpdir/siege.out" &
+	run on "$apache_server" call 'generate_woocommerce_data' 'realtime' "$_lockfile"
+	li 'Siege results'
+	run tail -n+2 "$tmpdir/siege.out"
+	finish
+
+
+	phase_start 'Additional common plugins'
+	run on "$apache_server" call 'install_additional_plugins'
+	run on "$siege_server"  call 'start_siege' 'additional_plugins' "file:$workspace/urls"
+	finish
+
+
+	phase_start 'Dynamic Resource Awareness'
+	run on "$mysqld_server" call 'adjust_mysqld_cache_size'
+	run on "$siege_server"  call 'start_siege' 'dynamic_resource_awareness' "file:$workspace/urls"
+	finish
+
+
+	timer 'stop'
+	say "Benchmark complete. Elapsed time: $elapsed."
+	newline
+}
+
+phase_start() {
+	trace "$@"
+	local _name="$1"
+	((phase+=1))
+	h1 "$(printf 'Phase %02d: %s' "$phase" "$_name")"
+	timer 'start'
+}
+
+finish() {
+	timer 'stop'
+	h1 "Phase completed in $elapsed"
+	newline
+	record_phase_metrics
+	artifact "phase-$phase"
+}
+
+## remote callables ########################################
+
+init_mysqld_server() {
+	trace "$@"
+	assert_base_cmds
+	assert_supported_distro
+	
+	need_cmd mysqld
+	need_cmd mysqladmin
+	need_cmd mysql
+
+	if [[ "$(run mysqld --version)" =~ 'Ver 5.6' ]]; then
+		need_cmd mysql_install_db
+	fi
+
+	li 'Install configuration and start mysqld'
+
+	debug 'verify networking'
+	local _skip_networking=false
+	if is_localhost "$apache_server"; then
+		_skip_networking=true
+	else
+		if \
+			{  { lsof -i "tcp:$mysqld_port" || ss -tln || netstat -tln ;} | grep -q "$mysqld_port" \
+				|| nc -z "$mysqld_server" "$mysqld_port" ;} &>/dev/null
+		then
+			fail "port $mysqld_port is held by another process"
+		fi
+	fi
+
+	debug 'clean workspace'
+	run rm -rf "$workspace/mysql/"            \
+				  "$workspace/mysql.conf"        \
+				  "$workspace/mysql.install.log" \
+				  "$workspace/mysql.log"         \
+				  "$workspace/mysql.sock"        \
+				  "$workspace/load.$(hostname)"  \
+				  "$workspace/du"
+
+	debug "mkdir $workspace"
+	run mkdir -p "$workspace/mysql"
+
+	debug "install mysqld config for $engine"
+	if [[ "$engine" == deep ]]; then
+		cat > "$workspace/mysql.conf" <<-EOF
+			[mysqld]
+			basedir = $mysqld_basedir
+			datadir = $workspace/mysql
+
+			skip-networking = $_skip_networking
+			socket = $workspace/mysql.sock
+			port = $mysqld_port
+
+			plugin-load = ha_deep.so
+
+			default-storage-engine = Deep
+			default-tmp-storage-engine = Deep
+			transaction-isolation = repeatable-read
+
+			deep-cache-size = $mysqld_cache_size
+			deep-mode-durable = off
+
+			deep-log-level-debug = $deepsql_logs
+			deep-log-level-info = $deepsql_logs
+			deep-log-level-warn = $deepsql_logs
+			deep-log-level-error = $deepsql_logs
+		EOF
+	elif [[ "$engine" == innodb ]]; then
+		cat > "$workspace/mysql.conf" <<-EOF
+			[mysqld]
+			basedir = $mysqld_basedir
+			datadir = $workspace/mysql
+
+			skip-networking = $_skip_networking
+			socket = $workspace/mysql.sock
+			port = $mysqld_port
+
+			default-storage-engine = InnoDB
+			default-tmp-storage-engine = InnoDB
+			transaction-isolation = repeatable-read
+
+			innodb-buffer-pool-size = $mysqld_cache_size
+			innodb-log-file-size = 1G
+			innodb-flush-log-at-trx-commit = 2
+			query-cache-size = 8M
+			max-heap-table-size = 32M
+			thread-cache-size = 4
+			table-open-cache = 800
+		EOF
+	else
+		fail "unknown engine: $engine"
+	fi
+	
+	debug 'identify mysql installer'
+	local _install_cmd='mysql_install_db' _initialize=
+	if [[ "$(run mysqld --version)" =~ 'Ver 5.7' ]]; then
+		_install_cmd='mysqld'
+		_initialize='--initialize-insecure'
+	fi
+
+	debug "install mysqld datadir using $_install_cmd"
+	redirect "$workspace/mysql.install.log"                    \
+		interruptable $_install_cmd --no-defaults $_initialize  \
+			--user="$ssh_user"                                   \
+			--socket="$workspace/mysql.sock"                     \
+			--basedir="$mysqld_basedir"                          \
+			--datadir="$workspace/mysql"
+
+	debug 'start mysqld process and wait for ping'
+	if [[ -f /usr/lib/mysql/plugin/libtcmalloc_minimal.so ]]; then
+		LD_PRELOAD=/usr/lib/mysql/plugin/libtcmalloc_minimal.so \
+		mysqld --defaults-file="$workspace/mysql.conf" &>"$workspace/mysql.log" & 
+	else
+		mysqld --defaults-file="$workspace/mysql.conf" &>"$workspace/mysql.log" &
+	fi
+	run -i interruptable mysqladmin -uroot --socket="$workspace/mysql.sock" --wait --connect-timeout=120 ping
+}
+
+init_apache_server() {
+	trace "$@"
+	assert_base_cmds
+	assert_supported_distro
+
+	need_cmd sudo
+	need_cmd service
+	need_cmd php
+
+	get_apache_config_dir &>/dev/null || fail "unable to locate apache configs directory"
+	get_apache_service_name &>/dev/null || fail "unable to locate apache service command"
+
+	li 'Install apache configuration and reload service'
+
+	debug 'clean workspace'
+	run sudo rm -rf "$workspace/wordpress/"       \
+						 "$workspace/load.$(hostname)" \
+						 "$workspace/cookie"
+
+	debug "mkdir $workspace/wordpress"
+	run mkdir -p "$workspace/wordpress"
+
+	local _apache_config_file="$(get_apache_config_dir)/$engine.conf"
+	local _apache_service_name="$(get_apache_service_name)"
+
+	debug "install apache config: $_apache_config_file"
+	cat <<-EOF | run sudo tee "$_apache_config_file" >/dev/null
+		Alias /wordpress/$engine $workspace/wordpress
+		<Directory "$workspace/wordpress">
+		  <IfVersion < 2.4>
+		    Order allow,deny
+		    Allow from all
+		  </IfVersion>
+		  <IfVersion >= 2.4>
+		    Require all granted
+		  </IfVersion>
+		</Directory>
+	EOF
+
+	debug "reload apache service: $_apache_service_name"
+	run sudo service "$_apache_service_name" reload >/dev/null
+}
+
+init_siege_server() {
+	trace "$@"
+	assert_base_cmds
+	assert_supported_distro
+
+	need_cmd siege
+
+	li 'Install siege configuration'
+
+	debug 'clean workspace'
+	run rm -rf "$workspace/siege.log"        \
+				  "$workspace/load.$(hostname)" \
+				  "$workspace/urls"
+
+	debug "mkdir $workspace/"
+	run mkdir -p "$workspace/"
+
+	debug 'install siege config'
+	cat >"$workspace/siegerc" <<-EOF
+		verbose = false
+		quiet = true
+		protocol = HTTP/1.1
+
+		time = $siege_max_time
+		concurrent = $siege_concurrency
+
+		benchmark = false
+		chunked = true
+		delay = 1
+		expire-session = true
+		failures = 8192
+		show-logfile = false
+		spinner = false
+
+		#internet = true       # when true, not guaranteed to hit all urls
+		#reps = once           # set at command line in start_siege()
+		#timeout = 10          # socket timeout
+	EOF
+}
+
+###
+
+setup_wordpress_database() {
+	trace "$@"
+	li 'Create WordPress database and mysql user'
+	run mysql -uroot --socket="$workspace/mysql.sock" <<-EOF
+		drop database if exists wordpress;
+
+		create database wordpress;
+
+		grant all privileges
+			on wordpress.*
+			to 'wordpress'@'%'
+			identified by 'wordpress';
+
+		grant all privileges
+			on wordpress.*
+			to 'wordpress'@'localhost'
+			identified by 'wordpress';
+
+		flush privileges;
+	EOF
+}
+
+install_wordpress_base() {
+	trace "$@"
+	cd "$workspace/wordpress"
+
+	li 'Download and install wp-cli utility'
+	run curl -sS 'https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar' >"$workspace/wp-cli"
+	run chmod 700 "$workspace/wp-cli"
+
+	run wp-cli --info >/dev/null
+
+	li 'Download, configure, and install WordPress core'
+	run -i wp-cli core download --no-color --path="$workspace/wordpress" | grep -v 'Error: DateTime::__construct'
+
+	local _connection_method
+	if is_localhost "$mysqld_server"; then
+		_connection_method="$workspace/mysql.sock"
+	else
+		_connection_method="$mysqld_port"
+	fi
+
+	debug 'wp-cli core config'
+	run -i wp-cli core config --no-color  \
+					--dbname='wordpress'      \
+					--dbuser='wordpress'      \
+					--dbpass='wordpress'      \
+					--dbhost="$mysqld_server:$_connection_method"
+
+	debug 'wp-cli core install'
+	run -i wp-cli core install --no-color                       \
+					--url="http://$apache_server/wordpress/$engine" \
+					--title="$engine"                               \
+					--admin_user="$engine"                          \
+					--admin_password="$engine"                      \
+					--admin_email='admin@example.org'               \
+					--skip-email
+
+	run -i wp-cli option update --quiet siteurl "http://$apache_server/wordpress/$engine"
+	run -i wp-cli option update --quiet home "http://$apache_server/wordpress/$engine"
+	run -i wp-cli option update --quiet posts_per_page 150
+
+	debug 'cache admin credentials'
+	cache_admin_credentials
+
+	debug 'assert credentials working'
+	local _with=$(curl -sSL "http://$apache_server/wordpress/$engine")
+	local _without=$(curl -sSL --cookie "$workspace/cookie" "http://$apache_server/wordpress/$engine")
+	if diff <(echo "$_with") <(echo "$_without") >/dev/null; then
+		fail "unable to capture WordPress login credentials"
+	fi
+
+	li 'Generate users in standard roles'
+	run wp-cli user generate --count=25 --role='administrator' | cat & pids
+	run wp-cli user generate --count=50 --role='editor'  | cat & pids
+	run wp-cli user generate --count=100 --role='author'  | cat & pids
+	run wp-cli user generate --count=250 --role='subscriber'  | cat & pids
+	run pids 'wait'
+
+	li 'Generate pages with filler content'
+	run cat >"$workspace/post-content" <<-EOF
+		Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras ac nisl sem.
+		Maecenas arcu erat, molestie id imperdiet at, aliquam a orci. Quisque
+		rutrum volutpat nisi, et placerat neque varius non. Morbi ultrices orci
+		blandit leo faucibus, nec lobortis justo venenatis. Mauris nec rhoncus
+		diam. Fusce iaculis facilisis metus nec molestie. Interdum et malesuada
+		fames ac ante ipsum primis in faucibus. Proin a sagittis diam. Duis
+		sodales a nunc sed aliquet. Integer a sem eu orci pulvinar facilisis.
+		Pellentesque a risus in diam semper tincidunt. Suspendisse potenti.
+
+		Fusce nec orci nibh. Nulla in augue condimentum, commodo enim quis,
+		aliquet purus. Nunc urna nulla, ullamcorper ac laoreet eget, mollis nec
+		justo.  Suspendisse vitae egestas tellus. Donec id sollicitudin orci.
+		Donec velit dui, posuere eget libero et, accumsan vulputate ex.
+		Suspendisse egestas malesuada mauris, nec convallis ante porttitor id.
+		Nullam facilisis venenatis leo, ut faucibus leo tincidunt et. Ut mattis
+		sollicitudin lectus ut ultrices.  Sed ut sollicitudin tortor, non
+		tincidunt odio. Mauris sit amet pulvinar nisi. Vivamus tincidunt justo sed
+		quam consequat, et tincidunt elit volutpat.
+
+		Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere
+		cubilia Curae; Donec consectetur vel nunc at congue. Nam at diam at velit
+		sollicitudin finibus suscipit ac diam. Nam neque quam, porttitor sed
+		egestas et, aliquam nec tellus. Duis pharetra neque a urna luctus,
+		malesuada pharetra eros posuere. Nullam elementum, neque nec suscipit
+		cursus, urna diam faucibus diam, ut imperdiet purus libero ut felis.
+		Integer a eros lobortis, efficitur metus id, lacinia eros. Vestibulum
+		pulvinar orci a dui tempus bibendum.
+
+		Integer molestie magna eros, eget condimentum quam porta at. Cras
+		condimentum tellus id risus pellentesque, nec blandit erat pulvinar.
+		Nullam rutrum odio vitae fringilla volutpat. Sed non turpis eu diam varius
+		consequat vestibulum et lacus. Nunc fringilla sem ac ultricies facilisis.
+		Mauris bibendum, erat eu convallis malesuada, enim lectus viverra metus,
+		vel aliquam eros est fermentum arcu. Vestibulum ante ipsum primis in
+		faucibus orci luctus et ultrices posuere cubilia Curae; Curabitur mollis,
+		mauris vel interdum blandit, arcu purus malesuada neque, id mattis sapien
+		turpis ut libero. Duis tempus pulvinar urna, eu dignissim urna vehicula
+		id. Pellentesque aliquam sit amet purus in condimentum. Proin ornare ac
+		quam a porttitor. Donec tincidunt justo leo, nec vulputate dui luctus id.
+		Morbi pharetra scelerisque tellus vulputate tristique. Duis accumsan ipsum
+		ac sapien eleifend gravida. Fusce luctus vestibulum eros non cursus.
+
+		Proin semper, velit sed scelerisque iaculis, nisl mauris sagittis quam, eu
+		luctus massa odio ut libero. Donec venenatis fringilla auctor.
+		Pellentesque habitant morbi tristique senectus et netus et malesuada fames
+		ac turpis egestas. Fusce posuere congue gravida. Nam vestibulum, felis
+		vestibulum consectetur semper, libero mauris faucibus risus, at egestas
+		dui ipsum varius velit. Nulla porttitor dapibus eros vel convallis. Morbi
+		lacinia, lorem sed luctus vulputate, metus mi molestie tortor, ut
+		fermentum quam elit at nisl.  Praesent efficitur maximus malesuada. Sed
+		venenatis aliquam augue ut eleifend. Aenean libero urna, posuere a turpis
+		condimentum, rhoncus ultricies elit. Vestibulum ante ipsum primis in
+		faucibus orci luctus et ultrices posuere cubilia Curae; In fermentum augue
+		diam, quis commodo nunc mattis eget. 
+	EOF
+
+	# TODO: make this a parameter
+	seq 1 250 | run xargs -n1 --max-procs=$(nproc) -I'{}' -- \
+		wp-cli post create --quiet "$workspace/post-content"
+
+	# arbitrary expensive query
+	run wp-cli search-replace --quiet 'Lorem' 'Lorem' --all-tables
+}
+
+install_woocommerce_plugins() {
+	trace "$@"
+	cd "$workspace/wordpress"
+
+	li 'Install and activate WooCommerce plugins'
+	{
+		run -i wp-cli plugin install --quiet --activate wordpress-importer woocommerce woocommerce-product-generator
+		run -i wp-cli theme  install --quiet --activate storefront
+		run -i wp-cli theme  install --quiet --activate klasik
+		run -i wp-cli theme  install --quiet --activate zerif-lite
+
+		run -i wp-cli option update --quiet woocommerce_calc_taxes yes
+		run -i wp-cli option update --quiet woocommerce_tax_display_show incl
+		run -i wp-cli option update --quiet woocommerce_tax_display_cart incl
+		run -i wp-cli option update --quiet woocommerce_calc_discounts_sequentially yes
+		run -i wp-cli option update --quiet woocommerce_calc_shipping yes
+		run -i wp-cli option update --quiet woocommerce_ship_to_countries all
+
+		run -i wp-cli option update --quiet woocommerce-product-generator-limit 1000000
+		run -i wp-cli option update --quiet woocommerce-product-generator-per-run $(( $static_products / 5 ))
+	} | grep -vP 'Unpacking|Installing|Plugin installed'
+
+	debug 'walk through woocommerce setup'
+	local _wpnonce
+	_wpnonce=$(curl -sSL --cookie "$workspace/cookie" \
+		"http://$apache_server/wordpress/$engine/wp-admin/admin.php?page=wc-setup&step=pages" | grep -oP '(?<=_wpnonce" value=")[^"]+')
+	_wpnonce=$(curl -sSL --cookie "$workspace/cookie" --data "save_step=Continue&_wpnonce=$_wpnonce" \
+		"http://$apache_server/wordpress/$engine/wp-admin/admin.php?page=wc-setup&step=pages" | grep -oP '(?<=_wpnonce" value=")[^"]+')
+
+	li 'Import WooCommerce dummy data'
+	run wp-cli import --quiet --authors=create \
+		"$workspace/wordpress/wp-content/plugins/woocommerce/dummy-data/dummy-data.xml" >/dev/null
+}
+
+generate_woocommerce_data() {
+	trace "$@"
+	local _method="$1"
+	cd "$workspace/wordpress"
+
+	local _product_generator_file="$workspace/wordpress/wp-content/plugins/woocommerce-product-generator/woocommerce-product-generator.php"
+	if ! [[ -f "$_product_generator_file.b" ]]; then
+		run perl -pi.b -e 's/(wp_verify_nonce\([^)]+\))/true \/* $1 *\//g' "$_product_generator_file"
+	fi
+
+	if [[ "$_method" == static ]]; then
+		li 'Generate users in WooCommerce roles'
+		run wp-cli user generate --count=100 --role='shop_manager' | cat & pids
+		run wp-cli user generate --count=1000 --role='customer' | cat & pids
+		run pids 'wait'
+
+		li "$(printf "Generate %'1d products" $static_products)"
+		generate_woocommerce_products "$static_products"
+
+		li "$(printf "Generate %'1d comments" $static_comments)"
+		generate_woocommerce_comments "$static_comments"
+	else
+		li "$(printf "Generate %'1d products and %'1d comments" $realtime_products $realtime_comments)"
+		local _lockfile="$2"
+		while [[ -f "$_lockfile" ]]; do
+			generate_woocommerce_products "$realtime_products" & pids
+			generate_woocommerce_comments "$realtime_comments" & pids
+			run pids 'wait'
+		done
+	fi
+}
+
+build_siege_url_list() {
+	trace "$@"
+	cd "$workspace/wordpress"
+
+	li 'Build siege urls list'
+	local readonly _my_account_page_id=$(run wp-cli db query 'select id from wp_posts where post_name = "my-account";' | tail -n1)
+	local readonly _cart_page_id=$(run wp-cli db query 'select id from wp_posts where post_name = "cart";' | tail -n1)
+	local readonly _checkout_page_id=$(run wp-cli db query 'select id from wp_posts where post_name = "checkout";' | tail -n1)
+
+	{
+		for i in {1..10}; do
+			echo "http://$apache_server/wordpress/$engine/"
+			echo "http://$apache_server/wordpress/$engine/"
+			echo "http://$apache_server/wordpress/$engine/"
+			echo "http://$apache_server/wordpress/$engine/"
+			echo "http://$apache_server/wordpress/$engine/"
+			echo "http://$apache_server/wordpress/$engine/?post_type=product"
+			echo "http://$apache_server/wordpress/$engine/?post_type=product"
+			echo "http://$apache_server/wordpress/$engine/?post_type=product"
+			echo "http://$apache_server/wordpress/$engine/wp-login.php"
+			echo "http://$apache_server/wordpress/$engine/wp-login.php POST log=admin&pwd=password&testcookie=1&rememberme=forever"
+			echo "http://$apache_server/wordpress/$engine/wp-login.php POST log=admin&pwd=password&testcookie=1&rememberme=forever"
+			echo "http://$apache_server/wordpress/$engine/?page_id=$_my_account_page_id"
+			echo "http://$apache_server/wordpress/$engine/?page_id=$_cart_page_id"
+			echo "http://$apache_server/wordpress/$engine/?page_id=$_cart_page_id"
+			echo "http://$apache_server/wordpress/$engine/?page_id=$_checkout_page_id"
+		done
+
+		run wp-cli db query <<-EOF | tail -n+3
+			select concat('http://$apache_server/wordpress/$engine/?product_cat=', slug)
+			from wp_terms;
+		EOF
+
+		run wp-cli db query <<-EOF | tail -n+3
+			select concat('http://$apache_server/wordpress/$engine/?product=', post_name)
+			from wp_posts
+			where
+				post_type = 'product';
+		EOF
+
+		run wp-cli db query <<-EOF | tail -n+3
+			select concat('http://$apache_server/wordpress/$engine/?product=', post_name, '#tab-reviews')
+			from wp_posts
+			where
+				post_type = 'product'
+		EOF
+	} >"$workspace/urls"
+}
+
+install_additional_plugins() {
+	trace "$@"
+	cd "$workspace/wordpress"
+
+	li 'Install additional plugins'
+	run wp-cli plugin install --quiet --activate \
+		akismet                                   \
+		bwp-google-xml-sitemaps                   \
+		google                                    \
+		google-analytics-for-wordpress            \
+		subscribe-to-comments-reloaded            \
+		tinymce-advanced                          \
+		w3-total-cache                            \
+		wordpress-seo
+
+	# TODO: plugin configuration
+
+	cache_admin_credentials
+
+	run curl -sSL --cookie "$workspace/cookie" "http://$apache_server/wordpress/$engine/?bwpsitemap=sitemapindex&generate=1&t=$(date +%s)" >/dev/null
+
+	seq 1 $(run wp-cli db query --quiet 'select max(id) from wp_posts' | tail -n1)                     \
+		| run curl -sSL --cookie "$workspace/cookie" --data 'srp=5&sre=admin@example.org&srs=Y&sra=add' \
+			"http://$apache_server/wordpress/$engine/wp-admin/options-general.php?page=subscribe-to-comments-reloaded/options/index.php&subscribepanel=1" >/dev/null
+
+   return 0
+}
+
+adjust_mysqld_cache_size() {
+	trace "$@"
+	local _size_bytes=
+	local _size="${cache_adjust_size%?}"
+	local _unit="${cache_adjust_size//[0-9]}"
+	local _regex='Ver 5.7.([5-9]|[1-9][0-9])'
+	case $_unit in
+		b | B) _size_bytes="$_size" ;;
+		k | K) _size_bytes=$(($_size*1024)) ;;
+		m | M) _size_bytes=$(($_size*1024*1024)) ;;
+		g | G) _size_bytes=$(($_size*1024*1024*1024)) ;;
+		*) fail "bad unit: $_unit" ;;
+	esac
+	if [[ "$engine" == deep ]]; then
+		li "Adjust deep_cache_size to $cache_adjust_size"
+		run mysql -uroot --socket="$workspace/mysql.sock" <<-EOF
+			set global deep_cache_size = $_size_bytes;
+		EOF
+	elif [[ "$engine" == innodb && "$(run mysqld --version)" =~ $_regex ]]; then
+		li "Adjust innodb_buffer_pool_size to $cache_adjust_size"
+		run mysql -uroot --socket="$workspace/mysql.sock" <<-EOF
+			set global innodb_buffer_pool_size = $_size_bytes;
+		EOF
+	else
+		li "No ability to adjust $engine cache size"
+	fi
+}
+
+start_siege() {
+	trace "$@"
+	local readonly _mark="$1" _against="$2"
+
+	li 'Start a siege'
+	{
+		if [[ "${_against%%:*}" == url ]]; then
+			run -i siege --rc="$workspace/siegerc" \
+				--mark="$_mark" --log="$workspace/siege.log" --time="$siege_min_time" "${_against#*:}"
+		elif [[ "${_against%%:*}" == file ]]; then
+			run -i siege --rc="$workspace/siegerc" \
+				--mark="$_mark" --log="$workspace/siege.log" --reps=once --file=<(shuf "${_against#*:}")
+		else
+			fail "bad siege spec: $_against"
+		fi
+	} | tail -n+6 | sed 's/:\s\+/:\t/g' | column -ts $'\t'
+	echo >>"$workspace/siege.log"
+
+	li "Sleep $siege_recovery_time to recover from siege..."
+	sleep $siege_recovery_time
+}
+
+###
+
+record_system_load() {
+	trace "$@"
+	uptime | sed 's/.*load/load/' \
+		>>"$workspace/load.$(hostname)"
+}
+
+record_database_size() {
+	trace "$@"
+	du -sh "$workspace/mysql/wordpress" \
+		>>"$workspace/du"
+}
+
+###
+
+apache_server_exit() {
+	trace "$@"
+	if [[ -f "$(get_apache_config_dir)/$engine.conf" ]]; then
+		li 'Remove apache configuration and reload'
+		run rm -rf "$HOME/.wp-cli"
+		run sudo rm -f "$(get_apache_config_dir)/$engine.conf"
+		run sudo service $(get_apache_service_name) reload >/dev/null
+	fi
+}
+
+mysqld_server_exit() {
+	trace "$@"
+	if allow pidof mysqld >/dev/null; then
+		li 'Shutdown mysqld process'
+		run interruptable mysqladmin -uroot --socket="$workspace/mysql.sock" --wait --connect-timeout=300 shutdown
+	fi
+}
+
+# lib: functions ###########################################
+ 
+generate_woocommerce_products() {
+	trace "$@"
+	local readonly _requested="$1" _concurrency="${2-$(nproc)}"
+	cd "$workspace/wordpress"
+
+	local _per_proc=0
+	local _count_offset=0 _count_in=0 _count_out=0 _count_delta=0 _time_in=0 _elapsed=0 _percent=0
+	_count_offset=$(run wp-cli db query --quiet 'select count(*) from wp_posts where post_type = "product";' | tail -n1)
+	while (( ($_count_out - $_count_offset) < $_requested )); do
+		_count_in=$(run wp-cli db query --quiet 'select count(*) from wp_posts where post_type = "product";' | tail -n1)
+		_per_proc=$(( ($_requested - ($_count_in - $_count_offset)) / $_concurrency ))
+		if [[ $_per_proc -eq 0 ]]; then
+			_per_proc=1
+		fi
+		_time_in=$(date +%s)
+		seq 1 $_concurrency | run xargs -n1 --max-procs=0 -I'{}' --    \
+			curl -sL --max-time $((60*20)) --cookie "$workspace/cookie" \
+				--data "max=$_per_proc&submit=Run&action=generate"       \
+				"http://$apache_server/wordpress/$engine/wp-admin/admin.php?page=product-generator" >/dev/null
+		_elapsed=$(( $(date +%s) - $_time_in ))
+		_count_out=$(run wp-cli db query --quiet 'select count(*) from wp_posts where post_type = "product";' | tail -n1)
+		_count_delta=$(( $_count_out - $_count_in ))
+		_percent=$(printf '%2.0f' $(bc <<< "scale=3; (($_count_out - $_count_offset) / $_requested) * 100"))
+		say "$(printf "%'6d total products ( %'5d new in %7s ) %5s%%%%)" \
+					$_count_out $_count_delta "$(minsec -s $_elapsed)" "($_percent")" | indent
+	done
+}
+
+generate_woocommerce_comments() {
+	local readonly _requested="$1" _concurrency="${2-$(nproc)}"
+	cd "$workspace/wordpress"
+
+	local _per_proc=$(( $_requested / $_concurrency ))
+	if [[ $_per_proc -eq 0 ]]; then
+		_per_proc=1
+	fi
+	local _count_in=0 _count_out=0 _count_delta=0 _time_in=0 _elapsed=0 _percent=0
+	debug "generate $_requested comments using $_concurrency procs ($_per_proc/proc)"
+	_count_in=$(run wp-cli db query --quiet 'select count(*) from wp_comments;' | tail -n1)
+	_time_in=$(date +%s)
+	seq 1 $_concurrency | run xargs -n1 --max-procs=0 -I'{}' -- \
+		wp-cli comment generate --quiet --count="$_per_proc" | cat
+	_elapsed=$(( $(date +%s) - $_time_in ))
+	_count_out=$(run wp-cli db query --quiet 'select count(*) from wp_comments;' | tail -n1)
+	_count_delta=$(( $_count_out - $_count_in ))
+	_percent=$(printf '%2.0f' $(bc <<< "scale=3; ($_count_delta / $_requested) * 100"))
+	say "$(printf "%'6d total comments ( %'5d new in %7s ) %5s%%%%)" \
+		$_count_out $_count_delta "$(minsec -s $_elapsed)" "($_percent")" | indent
+
+	debug 'replace comment content'
+	run wp-cli db query <<-EOF
+		update wp_comments
+		set comment_content =
+			"Lorem ipsum dolor sit amet, consectetur adipiscing elit. Phasellus et
+			 mauris nisl. Quisque facilisis est tortor, in laoreet massa dapibus in.
+			 Praesent tortor nulla, suscipit vel ornare eu, accumsan ut enim. Proin
+			 convallis dictum dapibus. Fusce id molestie dui, vel fringilla ante.
+			 Cras sed nisi tristique, auctor mi vel, pharetra elit. Donec imperdiet
+			 facilisis est sed luctus. Vivamus egestas semper dignissim. Nullam ut
+			 justo scelerisque, pulvinar elit maximus, convallis dui. Integer tempus
+			 dignissim urna, vitae eleifend ipsum molestie ac. Nullam purus turpis,
+			 ultricies mollis neque a, porta molestie tellus. Vivamus finibus
+			 sagittis neque ac aliquam.";
+	EOF
+
+	# arbitrary expensive query
+	run wp-cli search-replace --quiet 'Lorem' 'Lorem' --all-tables
+
+	debug 'update wp_comments post ids with rand()'
+	run wp-cli db query --quiet <<-EOF
+		update wp_comments
+		set comment_post_id =
+			1 + floor(rand() * (select max(id) from wp_posts));
+	EOF
+
+	seq 1 $(run wp-cli db query --quiet 'select max(comment_id) from wp_comments' | tail -n1) \
+		| run xargs -n10 --max-procs=$((2*$_concurrency)) -- wp-cli comment recount --quiet
+}
+
+record_phase_metrics() {
+	trace "$@"
+	local _server=
+	for _server in $(get_unique_servers); do
+		run on "$_server" call 'record_system_load'
+	done
+	run on "$mysqld_server" call 'record_database_size'
+}
+
+cache_admin_credentials() {
+	curl -sS -LD "$workspace/cookie" -b "$workspace/cookie.tmp"         \
+		--data "log=$engine&pwd=$engine&testcookie=1&rememberme=forever" \
+		"http://$apache_server/wordpress/$engine/wp-login.php" >/dev/null
+}
+
+# lib: helpers #############################################
+
+assert_base_cmds() {
+	need_cmd awk
+	need_cmd basename
+	need_cmd bc
+	need_cmd cat
+	need_cmd chmod
+	need_cmd cp
+	need_cmd curl
+	need_cmd head
+	need_cmd hostname
+	need_cmd killall
+	need_cmd mkdir
+	need_cmd mktemp
+	need_cmd nproc
+	need_cmd rm
+	need_cmd sed
+	need_cmd seq
+	need_cmd tee
+	need_cmd xargs
+}
+
+assert_supported_distro() {
+	local _distro=$(get_distro_id)
+	if ! [[ "$_distro" =~ ^Ubuntu|CentOS$ ]]; then
+		fail "unsupported distro: '$_distro'"
+	fi
+}
+
+get_distro_id() {
+	if have_cmd lsb_release; then
+		run lsb_release --short --id
+	elif [[ -f '/etc/issue' ]]; then
+		run head -n1 /etc/issue | run awk '{print $1}'
+	else
+		echo 'unknown'
+	fi
+}
+
+get_apache_service_name() {
+	local _cmd=
+	for _cmd in 'apache2' 'httpd'; do
+		if have_cmd "$_cmd"; then
+			echo "$_cmd"
+			return
+		fi
+	done
+	return 1
+}
+
+get_apache_config_dir() {
+	local _dir=
+	for _dir in '/etc/apache2/sites-enabled' '/etc/httpd/conf.d'; do
+		if [[ -d "$_dir" ]]; then
+			echo "$_dir"
+			return
+		fi
+	done
+	return 1
+}
+
+get_memory_size() {
+	local readonly _percent="$1" _unit="$2"
+	local readonly _mem_kbytes=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+	local _divisor=1
+	case $_unit in
+		b | B) _divisor=$((1)) ;;
+		k | K) _divisor=$((1024)) ;;
+		m | M) _divisor=$((1024*1024)) ;;
+		g | G) _divisor=$((1024*1024*1024)) ;;
+		*) fail "bad unit: $_unit" ;;
+	esac
+   bc <<< "scale=0; ((1024 * $_mem_kbytes) * $_percent) / $_divisor"
+}
+
+# lib: execution ###########################################
+
+on() {
+	trace "$@"
+	local readonly _target="$1" _action="$2"
+	shift; shift
+
+	if [[ $_action =~ run|allow|redirect|interruptable ]]; then
+		if is_localhost "$_target"; then
+			$_action "$@"
+		else
+			$_action rcmd 'ssh' "$ssh_user@$_target" "$@"
+		fi
+	elif [[ $_action == call ]]; then
+		local _fn="$1"; shift
+		if is_localhost "$_target"; then
+			$_fn "$@"
+		else
+			rcmd 'ssh' "$ssh_user@$_target" "cd $workspace; ./$self call $_fn $@"
+		fi
+	else
+		fail "unexpected action: $_action"
+	fi
+}
+
+run() {
+	trace "$@"
+	if [[ "$1" == -i ]]; then
+		shift
+		"$@" |& indent
+	else
+		"$@"
+	fi
+	local readonly _retval=$?
+	if [[ $_retval != 0 ]]; then
+		log "command failed: $*\n"
+		exit $_retval
+	fi
+}
+
+allow() {
+	trace "$@"
+	"$@"
+	local readonly _retval=$?
+	if [[ $_retval != 0 ]]; then
+		log "allowed command failed: $*\n"
+	fi
+	return $_retval
+}
+
+redirect() {
+	trace "$@"
+	local readonly _file="$1"; shift
+	"$@" &>"$_file"
+}
+
+rcmd() {
+	trace "$@"
+	local readonly _cmd="$1" _tty=; shift
+	if [[ "$_cmd" == ssh && "$(get_distro_id)" == CentOS ]]; then
+		_tty='-tt'
+	fi
+	$_cmd -q $_tty -o 'IdentitiesOnly=yes' -o 'PasswordAuthentication=no' -i "$ssh_key" "$@"
+}
+
+interruptable() {
+	trace "$@"
+	"$@" & pids
+	debug "waiting for $childpids"
+	pids 'wait'
+}
+
+# lib: messaging ###########################################
+
+h1() {
+	say '  :: %-62s %5s' "$*" "$(date +'%H:%M')"
+	indent 3
+}
+
+li() {
+	say "     - $*"
+	indent 7
+}
+
+say() {
+	local readonly _str="$1"; shift
+	printf -- "$_str" "$@"
+	newline
+}
+
+log() {
+	local readonly _str="$1"; shift
+	printf -- "$(hostname -s):$$: $_str\n" "$@" >&2
+}
+
+fail() {
+	newline
+	log "error: $@" 
+	exit 1
+}
+
+newline() {
+	echo
+}
+
+indent() {
+	if [[ -n "${1-}" ]]; then
+		indent="$(printf "%$(($1+2))s")"
+		return
+	fi
+
+	sed --unbuffered "s:\(^\|\r\):\1$indent:g"
+}
+
+# lib: debugging ###########################################
+
+debug() {
+	if [[ "$flag_debug" =~ true|1 ]]; then
+		local readonly _line="${BASH_LINENO[0]}" _func="${FUNCNAME[1]}" _param=
+		log "debug:%03d:%s: $*" "$_line" "$_func"
+	fi
+}
+
+trace() {
+	if [[ "$flag_trace" =~ true|1 ]]; then
+		local readonly _line="${BASH_LINENO[0]}" _func="${FUNCNAME[1]}" _param=
+		if [[ "$_func" =~ ^on|run$ ]]; then
+			_param="$1"
+		fi
+		log "trace:%03d:%s" "$_line" "$_func($_param)"
+		if [[ "$flag_args" =~ true|1 ]]; then
+			args "$@" | sed 's/: /: trace:    /'
+		fi
+	fi
+}
+
+args() {
+	local _arg= _i=0
+	for _arg; do
+		log "  arg $_i: $_arg"
+		((_i+=1))
+	done
+}
+
+# lib: utilities ###########################################
+
+pids() {
+	trace "$@"
+	if [[ "${1-}" == wait ]]; then
+		wait $childpids
+		wait $childpids
+		local _retval=$?
+		childpids=
+		return $?
+	else
+		childpids=$(append "$childpids" $!)
+	fi
+}
+
+update_path() {
+	if [[ -n "$mysqld_basedir" ]]; then
+		PATH="$mysqld_basedir/bin:$mysqld_basedir/scripts:$PATH"
+	fi
+	PATH="$workspace:$PATH"
+}
+
+param() {
+	trace "$@"
+	local readonly _name="$1" _default="$2"
+	params="$(append "$params" "$_name")"
+}
+
+artifact() {
+	trace "$@"
+	artifacts="$(append "$artifacts" "$1")"
+	debug "$artifacts"
+}
+
+append() {
+	trace "$@"
+	local _list="$1"
+	if [[ -z "$_list" ]]; then
+		echo "$2"
+	else
+		echo "$_list $2"
+	fi
+}
+
+is_arg() {
+	local _name="$1" _arg="$2"
+	grep -q -- "--$_name=" <<< "$_arg"
+}
+
+get_val() {
+	local _arg="$1"
+	echo "$_arg" | cut -d= -f2
+}
+
+have_cmd() {
+	command -v "$1" &>/dev/null
+}
+
+need_cmd() {
+	if ! command -v "$1" &>/dev/null; then
+		fail "command not found: '$1'"
+	fi
+}
+
+is_localhost() {
+	local readonly _server="$1" _eth0_ip
+	if have_cmd 'ip'; then
+		_eth0_ip="$(allow ip addr show eth0 | allow grep -oP '(?<=inet )[\d.]+')"
+	elif have_cmd 'ifconfig'; then
+		_eth0_ip="$(allow ifconfig eth0 | allow grep -oP '(?<=inet addr:)[\d.]+')"
+	fi
+	: "${_eth0_ip:=null}"
+	grep -qP "localhost|127.0.0.1|::1|$_eth0_ip|$(hostname -s)|$(hostname)" <<< "$_server"
+}
+
+using_remote_server() {
+	local _server=
+	for _server in $(get_unique_servers); do
+		if ! is_localhost "$_server"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+get_unique_servers() {
+	echo $(uniqs "$mysqld_server" "$apache_server" "$siege_server")
+}
+
+get_remote_servers() {
+	local _server
+	for item in $(get_unique_servers); do
+		if ! is_localhost "$item"; then
+			echo "$item"
+		fi
+	done
+}
+
+uniqs() {
+	printf -- "%s\n" "$@" | sort -u
+}
+
+concat() {
+	printf -- "%s" "$@"
+}
+
+make_temp_dir() {
+	local readonly _name="$1"
+	run mktemp --tmpdir --directory "$_name"
+	return $?
+}
+
+timer() {
+	local readonly _arg="$1"
+	if [[ "$_arg" == start ]]; then
+		pusht
+	else
+		popt
+	fi
+}
+
+pusht() {
+	if [[ -n "$timers" ]]; then
+		# add elapsed seconds to current head timer
+		local readonly _head=${timers##*::} # peek
+		timers=${timers%::*}                # pop
+		timers+="::$(($SECONDS + $_head))"  # push
+	fi
+	timers+="::0"                          # push
+	SECONDS=0                              # start timer
+}
+
+popt() {
+	# pop head and continue previous timer
+	local readonly _seconds=$SECONDS    # stop timer
+	local readonly _head=${timers##*::} # peek
+	timers=${timers%::*}                # pop
+	elapsed="$(minsec $(($_seconds + $_head)))"
+	SECONDS=$(($_seconds + $_head))     # continue
+}
+
+minsec() {
+	local _seconds="$1"
+	if [[ "$1" == -s ]]; then
+		_seconds="$2"
+		date --utc --date="@$_seconds" +'%Mm %Ss' \
+			| sed -e 's:0\([0-9]\):\1:g'           \
+			| sed -e 's:^0m ::'
+	else
+		date --utc --date="@$_seconds" +'%H hours %M mins %S seconds' \
+			| sed -e 's:01 \(hour\|min\|second\)s:1 \1:g'              \
+			| sed -e 's:0\([0-9]\):\1:g'                               \
+			| sed -e 's:^0 hours ::g'                                  \
+			| sed -e 's:^0 mins ::g'
+	fi
+}
+
+# lib: signaling ###########################################
+
+setup_traps() {
+	trace "$@"
+	trap_with_arg sigquit INT QUIT TERM
+	trap_with_arg sigerr  ERR
+	trap_with_arg sigexit EXIT
+}
+
+trap_with_arg() {
+	local _fn="$1" _sig=; shift
+	for _sig; do
+		trap "$_fn $(tr '[A-Z]' '[a-z]' <<< $_sig) \$LINENO" $_sig
+	done
+}
+
+sigquit() {
+	local _sig="$1" _line="$2"
+	newline >&2
+	debug "caught sig$_sig at line $_line"
+	if [[ -z "${childpids-}" ]]; then
+		log "caught sig$_sig."
+	else
+		log "caught sig$_sig. forwarding to child process ($childpids)."
+		read -n1
+		{ allow kill -TERM "$childpids" || allow kill -KILL "$childpids" ;} && childpid=
+	fi
+	newline >&2
+	exit
+}
+
+sigerr() {
+	local _sig="$1" _line="$2"
+	fail "caught sig$_sig at line $_line"
+}
+
+sigexit() {
+	local _sig="$1"
+	teardown
+}
+
+teardown() {
+	local _remotes_with_key= _remotes_with_workspace= _have_results=
+	if [[ -n "$artifacts" ]]; then
+		h1 'Remove all benchmark artifacts'
+		local _artifact=
+		for _artifact in $artifacts; do
+			case $_artifact in
+				key:*)
+					_remotes_with_key=$(append "$_remotes_with_key" "${_artifact/key:}")
+					;;
+
+				workspace:*)
+					_remotes_with_workspace=$(append "$_remotes_with_workspace" "${_artifact/workspace:}")
+					;;
+
+				apache_config_file)
+					debug 'remove apache config and reload'
+					allow on "$apache_server" call 'apache_server_exit'
+					;;
+
+				mysqld_process)
+					debug 'shutdown mysqld process'
+					allow on "$mysqld_server" call 'mysqld_server_exit'
+					;;
+
+				phase*)
+					debug "results exist for phase $_artifact"
+					_have_results=true
+					;;
+			esac
+		done
+	fi
+
+	local _final_workspace="$workspace"
+	if using_remote_server; then
+		local _server=
+		if [[ "$_have_results" == true && "$flag_keep" =~ true|1 ]]; then
+			li "Synchronize remote workspaces to $tmpdir/workspace"
+			for _server in $(uniqs $_remotes_with_workspace); do
+				debug "rsync workspace from $_server"
+				allow rsync -qaz -e "ssh -o 'IdentitiesOnly=yes' -o 'PasswordAuthentication=no' -i $ssh_key" \
+					"$ssh_user@$_server:$workspace" "$tmpdir/workspace"
+			done
+			_final_workspace="$tmpdir/workspace"
+		fi
+
+		if [[ -n "$_remotes_with_workspace" ]]; then
+			li 'Remove workspace from remotes'
+			for _server in $(uniqs $_remotes_with_workspace); do
+				debug "remove workspace from $_server"
+				on "$_server" allow "rm -rf $workspace"
+			done
+		fi
+
+		if [[ -n "$_remotes_with_key" ]]; then
+			li 'Deauthorize temporary ssh keys from remotes'
+			for _server in $(uniqs $_remotes_with_key); do
+				debug "remove keys from $_server"
+				on "$_server" allow "sed -i '/wordpress-bench-key/d' \$HOME/.ssh/authorized_keys"
+			done
+		fi
+	fi
+
+	if [[ "$flag_keep" =~ true|1  && -d "$_final_workspace" ]]; then
+		local _run_id="$(date +%F)/$$"
+		{  allow mkdir -p "$(dirname "$resultsdir/$_run_id")" &&
+			allow mv "$_final_workspace" "$resultsdir/$_run_id" &&
+			li "Results archived in $resultsdir/$_run_id"
+		} || li 'Failed to archive results'
+	elif [[ "$flag_keep" =~ false|0 && -d "$workspace" ]]; then
+		li 'Remove workspace'
+		allow rm -rf "$workspace"
+	fi
+
+	allow rm -rf "$tmpdir"
+}
+
+# switch ###################################################
+
+switch() {
+	if [[ "${1-}" =~ --help|-h ]]; then
+		usage
+	elif [[ "${1-}" =~ --version|-V ]]; then
+		version
+	elif [[ "${1-}" == call ]]; then
+		local _fn="$2"; shift; shift
+		if ! [[ -f "$PWD/params" ]]; then
+			fail "missing params file for call to $_fn"
+		fi
+		source "$PWD/params"
+		update_path
+		debug "call $_fn with args $*"
+		$_fn "$@"
+	else
+		main "$@"
+	fi
+}
+
+switch "$@"
+
+# vim: set noet
