@@ -518,6 +518,16 @@ init_apache_server() {
 	local _apache_config_file="$(get_apache_config_dir)/$engine.conf"
 	local _apache_service_name="$(get_apache_service_name)"
 
+	debug "check version module enabled"
+	if [[ $(get_distro_id) == Ubuntu ]]; then
+		if ! [[ -L  /etc/apache2/mods-enabled/version.load ]]; then
+			need_cmd a2enmod
+			need_cmd a2dismod
+			run sudo a2enmod version >/dev/null
+			run touch "$workspace/.a2dismod"
+		fi
+	fi
+
 	debug "install apache config: $_apache_config_file"
 	cat <<-EOF | run sudo tee "$_apache_config_file" >/dev/null
 		Alias /wordpress/$engine $workspace/wordpress
@@ -934,6 +944,9 @@ record_database_size() {
 
 apache_server_exit() {
 	trace "$@"
+	if [[ -f "$workspace/.a2dismod" ]]; then
+		run sudo a2dismod version >/dev/null
+	fi
 	if [[ -f "$(get_apache_config_dir)/$engine.conf" ]]; then
 		li 'Remove apache configuration and reload'
 		run rm -rf "$HOME/.wp-cli"
